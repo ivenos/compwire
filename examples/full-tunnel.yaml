@@ -1,0 +1,46 @@
+# Full-tunnel: ALL client traffic is routed through the VPN server.
+# AllowedIPs=0.0.0.0/0 means every packet (including internet traffic) goes
+# through the tunnel. The server masquerades the traffic using its own IP.
+#
+# WG_POST_UP on the server: replace "eth0" with the server's outbound interface
+# (run `ip route | awk '/default/{print $5; exit}'` to find it).
+#
+# Keys: generate with  docker run --rm ghcr.io/ivenos/compwire:latest genkey
+#
+# .env example:
+#   WG_SERVER_PRIV=<...>   WG_SERVER_PUB=<...>
+#   WG_CLIENT_PRIV=<...>   WG_CLIENT_PUB=<...>
+#   WG_OUTBOUND_IFACE=eth0
+#
+# Usage: docker compose -f examples/full-tunnel.yaml up
+
+services:
+  server:
+    image: ${COMPWIRE_IMAGE:-ghcr.io/ivenos/compwire:latest}
+    network_mode: host
+    cap_add: [NET_ADMIN]
+    environment:
+      WG_ROLE: server
+      WG_PRIVATE_KEY: ${WG_SERVER_PRIV}
+      WG_POST_UP: "iptables -A FORWARD -i wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o ${WG_OUTBOUND_IFACE:-eth0} -j MASQUERADE"
+      WG_POST_DOWN: "iptables -D FORWARD -i wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o ${WG_OUTBOUND_IFACE:-eth0} -j MASQUERADE"
+      WG_PEER_CLIENT_PUBKEY: ${WG_CLIENT_PUB}
+      WG_PEER_CLIENT_ALLOWED_IPS: 10.77.0.2/32
+    restart: unless-stopped
+
+  client:
+    image: ${COMPWIRE_IMAGE:-ghcr.io/ivenos/compwire:latest}
+    network_mode: host
+    cap_add: [NET_ADMIN]
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      WG_ROLE: client
+      WG_IFACE: wg1
+      WG_PRIVATE_KEY: ${WG_CLIENT_PRIV}
+      WG_SERVER_PUBKEY: ${WG_SERVER_PUB}
+      WG_SERVER_ENDPOINT: ${WG_SERVER_HOST}:51820
+      WG_ALLOWED_IPS: 0.0.0.0/0,::/0
+      WG_DNS: 1.1.1.1
+    restart: unless-stopped

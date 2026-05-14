@@ -1,0 +1,40 @@
+# Quick-start: one server and one client on the same host.
+#
+# 1. Generate a keypair for the server and one for the client:
+#      docker run --rm ghcr.io/ivenos/compwire:latest genkey
+#
+# 2. Replace every <...> placeholder below with the matching value.
+#
+# 3. Start:
+#      docker compose up -d
+#      docker compose logs -f
+#
+# In production each node runs on its own host.
+# See examples/ for multi-client, full-tunnel, and IPv6 setups.
+
+services:
+  server:
+    image: ghcr.io/ivenos/compwire:latest
+    network_mode: host
+    cap_add: [NET_ADMIN]
+    environment:
+      WG_ROLE: server
+      WG_PRIVATE_KEY: <server-private-key>
+      WG_PEER_CLIENT_PUBKEY: <client-public-key>
+      WG_PEER_CLIENT_ALLOWED_IPS: 10.77.0.2/32
+    restart: unless-stopped
+
+  client:
+    image: ghcr.io/ivenos/compwire:latest
+    network_mode: host
+    cap_add: [NET_ADMIN]
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      WG_ROLE: client
+      WG_IFACE: wg1
+      WG_PRIVATE_KEY: <client-private-key>
+      WG_SERVER_PUBKEY: <server-public-key>
+      WG_SERVER_ENDPOINT: 127.0.0.1:51820
+    restart: unless-stopped

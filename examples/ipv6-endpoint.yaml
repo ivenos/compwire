@@ -1,0 +1,42 @@
+# Client connecting to a server via an IPv6 endpoint.
+# The WireGuard tunnel itself carries IPv4 VPN traffic (10.77.0.x);
+# only the transport (outer UDP packet) uses IPv6.
+#
+# Requires the server to be reachable at an IPv6 address.
+# IPv6 endpoints must use bracket notation: [address]:port
+#
+# Keys: generate with  docker run --rm ghcr.io/ivenos/compwire:latest genkey
+#
+# .env example:
+#   WG_SERVER_PRIV=<...>   WG_SERVER_PUB=<...>
+#   WG_CLIENT_PRIV=<...>   WG_CLIENT_PUB=<...>
+#   WG_SERVER_IPV6=2001:db8::1   (replace with real IPv6 address)
+#
+# Usage: docker compose -f examples/ipv6-endpoint.yaml up
+
+services:
+  server:
+    image: ${COMPWIRE_IMAGE:-ghcr.io/ivenos/compwire:latest}
+    network_mode: host
+    cap_add: [NET_ADMIN]
+    environment:
+      WG_ROLE: server
+      WG_PRIVATE_KEY: ${WG_SERVER_PRIV}
+      WG_PEER_CLIENT_PUBKEY: ${WG_CLIENT_PUB}
+      WG_PEER_CLIENT_ALLOWED_IPS: 10.77.0.2/32
+    restart: unless-stopped
+
+  client:
+    image: ${COMPWIRE_IMAGE:-ghcr.io/ivenos/compwire:latest}
+    network_mode: host
+    cap_add: [NET_ADMIN]
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      WG_ROLE: client
+      WG_IFACE: wg1
+      WG_PRIVATE_KEY: ${WG_CLIENT_PRIV}
+      WG_SERVER_PUBKEY: ${WG_SERVER_PUB}
+      WG_SERVER_ENDPOINT: "[${WG_SERVER_IPV6:-::1}]:51820"
+    restart: unless-stopped

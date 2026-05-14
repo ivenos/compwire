@@ -1,0 +1,39 @@
+# Server + single IPv4 client — minimal configuration.
+#
+# Keys: generate with  docker run --rm ghcr.io/ivenos/compwire:latest genkey
+#       Run once per role (server, client) and store in a .env file or secrets manager.
+#
+# .env example:
+#   WG_SERVER_PRIV=<server-private-key>
+#   WG_SERVER_PUB=<server-public-key>
+#   WG_CLIENT_PRIV=<client-private-key>
+#   WG_CLIENT_PUB=<client-public-key>
+#
+# Usage: docker compose -f examples/basic.yaml up
+
+services:
+  server:
+    image: ${COMPWIRE_IMAGE:-ghcr.io/ivenos/compwire:latest}
+    network_mode: host
+    cap_add: [NET_ADMIN]
+    environment:
+      WG_ROLE: server
+      WG_PRIVATE_KEY: ${WG_SERVER_PRIV}
+      WG_PEER_CLIENT_PUBKEY: ${WG_CLIENT_PUB}
+      WG_PEER_CLIENT_ALLOWED_IPS: 10.77.0.2/32
+    restart: unless-stopped
+
+  client:
+    image: ${COMPWIRE_IMAGE:-ghcr.io/ivenos/compwire:latest}
+    network_mode: host
+    cap_add: [NET_ADMIN]
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      WG_ROLE: client
+      WG_IFACE: wg1
+      WG_PRIVATE_KEY: ${WG_CLIENT_PRIV}
+      WG_SERVER_PUBKEY: ${WG_SERVER_PUB}
+      WG_SERVER_ENDPOINT: ${WG_SERVER_HOST:-127.0.0.1}:51820
+    restart: unless-stopped

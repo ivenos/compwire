@@ -1,0 +1,64 @@
+# Server + two clients. Client2 uses a preshared key for additional authentication.
+# WG_POST_UP/DOWN add iptables FORWARD rules so clients can reach each other
+# through the server (client-to-client routing).
+#
+# Keys: generate with  docker run --rm ghcr.io/ivenos/compwire:latest genkey
+#       Run once per role. PSK: openssl rand -base64 32
+#
+# .env example:
+#   WG_SERVER_PRIV=<server-private-key>   WG_SERVER_PUB=<server-public-key>
+#   WG_CLIENT1_PRIV=<...>                 WG_CLIENT1_PUB=<...>
+#   WG_CLIENT2_PRIV=<...>                 WG_CLIENT2_PUB=<...>
+#   WG_PSK=<preshared-key>
+#
+# Usage: docker compose -f examples/multi-client.yaml up
+
+services:
+  server:
+    image: ${COMPWIRE_IMAGE:-ghcr.io/ivenos/compwire:latest}
+    network_mode: host
+    cap_add: [NET_ADMIN]
+    environment:
+      WG_ROLE: server
+      WG_PRIVATE_KEY: ${WG_SERVER_PRIV}
+      WG_POST_UP: "iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT"
+      WG_POST_DOWN: "iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT"
+      WG_PEER_CLIENT1_PUBKEY: ${WG_CLIENT1_PUB}
+      WG_PEER_CLIENT1_ALLOWED_IPS: 10.77.0.2/32
+      WG_PEER_CLIENT2_PUBKEY: ${WG_CLIENT2_PUB}
+      WG_PEER_CLIENT2_ALLOWED_IPS: 10.77.0.3/32
+      WG_PEER_CLIENT2_PSK: ${WG_PSK}
+    restart: unless-stopped
+
+  client1:
+    image: ${COMPWIRE_IMAGE:-ghcr.io/ivenos/compwire:latest}
+    network_mode: host
+    cap_add: [NET_ADMIN]
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      WG_ROLE: client
+      WG_IFACE: wg1
+      WG_PRIVATE_KEY: ${WG_CLIENT1_PRIV}
+      WG_SERVER_PUBKEY: ${WG_SERVER_PUB}
+      WG_SERVER_ENDPOINT: ${WG_SERVER_HOST:-127.0.0.1}:51820
+      WG_ALLOWED_IPS: 10.77.0.0/24
+    restart: unless-stopped
+
+  client2:
+    image: ${COMPWIRE_IMAGE:-ghcr.io/ivenos/compwire:latest}
+    network_mode: host
+    cap_add: [NET_ADMIN]
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      WG_ROLE: client
+      WG_IFACE: wg2
+      WG_PRIVATE_KEY: ${WG_CLIENT2_PRIV}
+      WG_SERVER_PUBKEY: ${WG_SERVER_PUB}
+      WG_SERVER_ENDPOINT: ${WG_SERVER_HOST:-127.0.0.1}:51820
+      WG_ALLOWED_IPS: 10.77.0.0/24
+      WG_PSK: ${WG_PSK}
+    restart: unless-stopped
