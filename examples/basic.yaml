@@ -1,6 +1,6 @@
 # Server + single IPv4 client — minimal configuration.
 #
-# Keys: generate with  docker run --rm ghcr.io/ivenos/compwire:latest genkey
+# Keys: generate with  docker run --rm ivenos/compwire:latest genkey
 #       Run once per role (server, client) and store in a .env file or secrets manager.
 #
 # .env example:
@@ -13,7 +13,7 @@
 
 services:
   server:
-    image: ${COMPWIRE_IMAGE:-ghcr.io/ivenos/compwire:latest}
+    image: ${COMPWIRE_IMAGE:-ivenos/compwire:latest}
     network_mode: host
     cap_add: [NET_ADMIN]
     environment:
@@ -24,7 +24,7 @@ services:
     restart: unless-stopped
 
   client:
-    image: ${COMPWIRE_IMAGE:-ghcr.io/ivenos/compwire:latest}
+    image: ${COMPWIRE_IMAGE:-ivenos/compwire:latest}
     network_mode: host
     cap_add: [NET_ADMIN]
     depends_on:

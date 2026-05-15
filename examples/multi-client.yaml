@@ -2,7 +2,7 @@
 # WG_POST_UP/DOWN add iptables FORWARD rules so clients can reach each other
 # through the server (client-to-client routing).
 #
-# Keys: generate with  docker run --rm ghcr.io/ivenos/compwire:latest genkey
+# Keys: generate with  docker run --rm ivenos/compwire:latest genkey
 #       Run once per role. PSK: openssl rand -base64 32
 #
 # .env example:
@@ -15,7 +15,7 @@
 
 services:
   server:
-    image: ${COMPWIRE_IMAGE:-ghcr.io/ivenos/compwire:latest}
+    image: ${COMPWIRE_IMAGE:-ivenos/compwire:latest}
     network_mode: host
     cap_add: [NET_ADMIN]
     environment:
@@ -31,7 +31,7 @@ services:
     restart: unless-stopped
 
   client1:
-    image: ${COMPWIRE_IMAGE:-ghcr.io/ivenos/compwire:latest}
+    image: ${COMPWIRE_IMAGE:-ivenos/compwire:latest}
     network_mode: host
     cap_add: [NET_ADMIN]
     depends_on:
@@ -47,7 +47,7 @@ services:
     restart: unless-stopped
 
   client2:
-    image: ${COMPWIRE_IMAGE:-ghcr.io/ivenos/compwire:latest}
+    image: ${COMPWIRE_IMAGE:-ivenos/compwire:latest}
     network_mode: host
     cap_add: [NET_ADMIN]
     depends_on:
