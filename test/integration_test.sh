@@ -1,16 +1,7 @@
 #!/bin/sh
-# Real WireGuard integration tests — three scenarios mirroring examples/*.yaml.
-#
-# Scenarios and their corresponding examples:
-#   basic        → examples/basic.yaml        (server + 1 IPv4 client)
-#   multi-client → examples/multi-client.yaml (server + 2 clients, PSK, cross-routing)
-#   ipv6-endpoint→ examples/ipv6-endpoint.yaml(client via IPv6 endpoint [::1]:51820)
-#
-# Note: examples/*.yaml use network_mode:host for real deployments on separate
-# machines. These tests use a Docker bridge network so all containers run on one
-# host without routing-table conflicts between WireGuard interfaces.
-#
-# Requires: Docker with NET_ADMIN support, Linux kernel >= 5.6 (WireGuard built-in).
+# Integration tests mirroring examples/*.yaml (basic, multi-client, ipv6-endpoint).
+# Uses a Docker bridge network instead of host networking to run on one machine.
+# Requires Docker with NET_ADMIN and kernel >= 5.6.
 # Usage: sh test/integration_test.sh [IMAGE]
 set -eu
 
@@ -24,9 +15,7 @@ log()  { printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 ok()   { printf '  [PASS] %s\n' "$*"; PASS=$(( PASS + 1 )); }
 fail() { printf '  [FAIL] %s\n' "$*"; FAIL=$(( FAIL + 1 )); }
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+# --- Helpers ---
 parse_key() { grep "^${1}=" | cut -d= -f2-; }
 
 genkeys() {
@@ -45,8 +34,6 @@ ping_test() {
   fi
 }
 
-# Run a scenario: bring up containers, run the check function, tear down.
-# Usage: run_scenario <net> <check_fn> <container...>
 _NET=""
 _CONTAINERS=""
 scenario_cleanup() {
@@ -69,17 +56,13 @@ scenario_add() {
   _CONTAINERS="${_CONTAINERS:+$_CONTAINERS }$1"
 }
 
-# ---------------------------------------------------------------------------
-# Build image if missing
-# ---------------------------------------------------------------------------
+# --- Build image if missing ---
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-  log "Image '$IMAGE' not found — building..."
+  log "Image '$IMAGE' not found - building..."
   docker build -t "$IMAGE" "$ROOT"
 fi
 
-# ===========================================================================
-# Test: genkey subcommand  (examples: all scenarios)
-# ===========================================================================
+# --- Test: genkey subcommand ---
 echo ""
 echo "################################################################"
 echo "# genkey subcommand"
@@ -101,10 +84,7 @@ else
   fail "genkey: PRIVATE_KEY format unexpected"
 fi
 
-# ===========================================================================
-# Scenario: basic  (mirrors examples/basic.yaml)
-# Server + 1 IPv4 client, default settings.
-# ===========================================================================
+# --- Scenario: basic - server + 1 IPv4 client (examples/basic.yaml) ---
 echo ""
 echo "################################################################"
 echo "# Scenario: basic  (examples/basic.yaml)"
@@ -128,7 +108,7 @@ docker run -d --name "$SRV" \
 scenario_add "$SRV"
 
 SRV_IP=$(docker inspect "$SRV" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
-log "basic/server started — Docker IP: $SRV_IP"
+log "basic/server started - Docker IP: $SRV_IP"
 sleep 3
 
 docker run -d --name "$CL" \
@@ -186,10 +166,7 @@ done
 
 scenario_cleanup
 
-# ===========================================================================
-# Scenario: multi-client  (mirrors examples/multi-client.yaml)
-# Server + 2 clients, client2 uses PSK, client-to-client routing via server.
-# ===========================================================================
+# --- Scenario: multi-client - 2 clients, PSK, cross-routing (examples/multi-client.yaml) ---
 echo ""
 echo "################################################################"
 echo "# Scenario: multi-client  (examples/multi-client.yaml)"
@@ -224,7 +201,7 @@ docker run -d --name "$SRV" \
 scenario_add "$SRV"
 
 SRV_IP=$(docker inspect "$SRV" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
-log "multi-client/server started — Docker IP: $SRV_IP"
+log "multi-client/server started - Docker IP: $SRV_IP"
 sleep 3
 
 docker run -d --name "$CL1" \
@@ -318,10 +295,7 @@ done
 
 scenario_cleanup
 
-# ===========================================================================
-# Scenario: ipv6-endpoint  (mirrors examples/ipv6-endpoint.yaml)
-# Client connects to server via IPv6 endpoint [::1]:51820.
-# ===========================================================================
+# --- Scenario: ipv6-endpoint - client via [::1]:51820 (examples/ipv6-endpoint.yaml) ---
 echo ""
 echo "################################################################"
 echo "# Scenario: ipv6-endpoint  (examples/ipv6-endpoint.yaml)"
@@ -353,11 +327,11 @@ case "$_raw_ipv6" in
   *:*) SRV_IPV6="$_raw_ipv6" ;;
   *)   SRV_IPV6="" ;;
 esac
-log "ipv6-endpoint/server started — IPv6: ${SRV_IPV6:-<none>}"
+log "ipv6-endpoint/server started - IPv6: ${SRV_IPV6:-<none>}"
 sleep 3
 
 if [ -z "$SRV_IPV6" ]; then
-  # Docker bridge doesn't have IPv6 enabled — skip connectivity, validate config
+  # Docker bridge doesn't have IPv6 enabled - skip connectivity, validate config
   log "Docker bridge has no IPv6; testing config generation only."
 
   docker run -d --name "$CL" \
@@ -392,7 +366,7 @@ else
     -e "WG_SERVER_ENDPOINT=[${SRV_IPV6}]:51820" \
     "$IMAGE" >/dev/null
   scenario_add "$CL"
-  log "ipv6-endpoint/client started — endpoint [${SRV_IPV6}]:51820"
+  log "ipv6-endpoint/client started - endpoint [${SRV_IPV6}]:51820"
 
   log "Waiting 15s for handshake..."
   sleep 15
@@ -414,7 +388,6 @@ fi
 
 scenario_cleanup
 
-# ===========================================================================
 echo ""
 echo "=================================================================="
 printf   "  Result: %d passed, %d failed\n" "$PASS" "$FAIL"

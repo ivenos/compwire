@@ -1,14 +1,6 @@
-# Server + single IPv4 client — minimal configuration.
-#
-# Keys: generate with  docker run --rm ivenos/compwire:latest genkey
-#       Run once per role (server, client) and store in a .env file or secrets manager.
-#
-# .env example:
-#   WG_SERVER_PRIV=<server-private-key>
-#   WG_SERVER_PUB=<server-public-key>
-#   WG_CLIENT_PRIV=<client-private-key>
-#   WG_CLIENT_PUB=<client-public-key>
-#
+# Server + single IPv4 client - minimal configuration.
+# Generate keys: docker run --rm ivenos/compwire:latest genkey  (once per role)
+# .env: WG_SERVER_PRIV, WG_SERVER_PUB, WG_CLIENT_PRIV, WG_CLIENT_PUB
 # Usage: docker compose -f examples/basic.yaml up
 
 services:

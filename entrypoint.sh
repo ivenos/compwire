@@ -14,10 +14,6 @@ if [ "${1:-}" = "genkey" ]; then
 fi
 
 # --- Subcommand: showqr ---
-# Generates the client config from env vars and prints it as a QR code.
-# The config is NOT kept — once the phone has scanned it, the container can exit.
-# Usage (new mobile client):  docker run --rm -e WG_ROLE=client ... showqr
-# Usage (running container):  docker exec <client-container> /entrypoint.sh showqr
 _showqr=0
 [ "${1:-}" = "showqr" ] && _showqr=1
 
@@ -32,7 +28,6 @@ validate_cidr() {
   esac
   case "$_ip" in
     *:*)
-      # IPv6 — check hex digits/colons, prefix 0-128, no duplicate ::, max 7 colons
       [ "$_prefix" -gt 128 ] && die "$_label IPv6 prefix must be 0-128, got: '$_cidr'."
       case "$_ip" in
         *[!0-9a-fA-F:]*) die "$_label is not a valid IPv6 address in '$_cidr'." ;;
@@ -46,7 +41,6 @@ validate_cidr() {
       fi
       ;;
     *)
-      # IPv4 — four octets 0-255, prefix 0-32
       [ "$_prefix" -gt 32 ] && die "$_label prefix must be 0-32, got: '$_cidr'."
       printf '%s' "$_ip" | awk -F. '
         NF!=4 { exit 1 }
@@ -63,7 +57,7 @@ validate_cidr_list() {
   _oIFS="$IFS"; IFS=','
   # shellcheck disable=SC2086
   for _entry in $_list; do
-    _entry="${_entry# }"; _entry="${_entry% }"  # trim one leading/trailing space
+    _entry="${_entry# }"; _entry="${_entry% }"
     [ -z "$_entry" ] && die "$_label contains an empty entry in '$_list'."
     validate_cidr "$_label" "$_entry"
   done
@@ -91,18 +85,23 @@ validate_table() {
   fi
 }
 
-# Validate DNS: reject newlines and shell metacharacters (value is written verbatim to config).
-validate_dns() {
-  [ -z "$1" ] && die "WG_DNS is set but empty."
-  case "$1" in
+# Reject newlines - would inject extra wg-quick config keys.
+validate_no_newline() {
+  case "$2" in
     *'
-'*) die "WG_DNS must not contain newline characters." ;;
-    *[\;\&\|\`\$\(\)\<\>\{\}\!\\]*) die "WG_DNS contains invalid characters: '$1'." ;;
+'*) die "$1 must not contain newline characters." ;;
   esac
 }
 
-# Validate a WireGuard key or PSK: must be non-empty and contain only base64 characters.
-# Rejects newlines and control characters, preventing config-line injection.
+# Validate DNS: allowlist for IPs, hostnames, comma/space separators.
+validate_dns() {
+  [ -z "$1" ] && die "WG_DNS is set but empty."
+  case "$1" in
+    *[!A-Za-z0-9.:,\ -]*) die "WG_DNS contains invalid characters: '$1'." ;;
+  esac
+}
+
+# Validate a WireGuard key or PSK: non-empty, base64 chars only.
 validate_wg_key() {
   _label="$1" _key="$2"
   [ -z "$_key" ] && die "$_label is empty."
@@ -125,6 +124,7 @@ validate_keepalive() {
 # Validate endpoint: host:port or [ipv6]:port.
 validate_endpoint() {
   _label="$1" _ep="$2"
+  validate_no_newline "$_label" "$_ep"
   case "$_ep" in
     \[*\]:*)
       _host="${_ep#[}"; _host="${_host%%]:*}"
@@ -163,7 +163,7 @@ esac
 # Resolve WG_PRIVATE_KEY from file if needed
 if [ -z "${WG_PRIVATE_KEY:-}" ] && [ -n "${WG_PRIVATE_KEY_FILE:-}" ]; then
   [ -f "$WG_PRIVATE_KEY_FILE" ] || die "WG_PRIVATE_KEY_FILE points to non-existent file: '$WG_PRIVATE_KEY_FILE'."
-  WG_PRIVATE_KEY="$(tr -d '\r\n' < "$WG_PRIVATE_KEY_FILE")"
+  WG_PRIVATE_KEY="$(tr -d '[:space:]' < "$WG_PRIVATE_KEY_FILE")"
 fi
 [ -z "${WG_PRIVATE_KEY:-}" ] && die "WG_PRIVATE_KEY (or WG_PRIVATE_KEY_FILE) is not set."
 validate_wg_key "WG_PRIVATE_KEY" "$WG_PRIVATE_KEY"
@@ -197,6 +197,12 @@ fi
 [ -n "$WG_TABLE" ] && validate_table "$WG_TABLE"
 [ -n "$WG_DNS"   ] && validate_dns   "$WG_DNS"
 
+# Hooks are arbitrary shell commands by design - only block config-line injection.
+validate_no_newline "WG_PRE_UP"    "$WG_PRE_UP"
+validate_no_newline "WG_POST_UP"   "$WG_POST_UP"
+validate_no_newline "WG_PRE_DOWN"  "$WG_PRE_DOWN"
+validate_no_newline "WG_POST_DOWN" "$WG_POST_DOWN"
+
 # --- Role-specific variables ---
 if [ "$WG_ROLE" = "server" ]; then
   WG_ADDRESS="${WG_ADDRESS:-10.77.0.1/24}"
@@ -217,7 +223,7 @@ else
 
   if [ -z "${WG_PSK:-}" ] && [ -n "${WG_PSK_FILE:-}" ]; then
     [ -f "$WG_PSK_FILE" ] || die "WG_PSK_FILE points to non-existent file: '$WG_PSK_FILE'."
-    WG_PSK="$(tr -d '\r\n' < "$WG_PSK_FILE")"
+    WG_PSK="$(tr -d '[:space:]' < "$WG_PSK_FILE")"
   fi
   [ -n "${WG_PSK:-}" ] && validate_wg_key "WG_PSK" "$WG_PSK"
 fi
@@ -228,9 +234,7 @@ WG_PUBLIC_KEY="$(printf '%s' "$WG_PRIVATE_KEY" | wg pubkey)"
 log "Role: $WG_ROLE | Address: $WG_ADDRESS | Public key: $WG_PUBLIC_KEY"
 
 # --- Write WireGuard config ---
-# All [Interface] keys aligned to 11 chars; all [Peer] keys aligned to 20 chars
-# (to fit PersistentKeepalive). umask 077 ensures the file is never world-readable,
-# even briefly; chmod 600 is kept as explicit documentation of intent.
+# umask 077: file never world-readable, even before the explicit chmod 600 below.
 umask 077
 mkdir -p /etc/wireguard
 CFG="/etc/wireguard/${WG_IFACE}.conf"
@@ -253,9 +257,8 @@ chmod 600 "$CFG"
 unset WG_PRIVATE_KEY
 
 if [ "$WG_ROLE" = "server" ]; then
-  # Discover peers by scanning for WG_PEER_<ID>_PUBKEY env vars.
-  # Peer IDs must be alphanumeric (A-Z, 0-9) — no underscores.
-  peer_ids="$(env | grep -E '^WG_PEER_[A-Z0-9]+_PUBKEY=' | sed 's/^WG_PEER_//;s/_PUBKEY=.*//' | sort)"
+  # Discover peers from WG_PEER_<ID>_PUBKEY env vars; ID = [A-Z0-9]+, no underscores.
+  peer_ids="$(env | grep -E '^WG_PEER_[A-Z0-9]+_PUBKEY=' | sed 's/^WG_PEER_//;s/_PUBKEY=.*//' | sort -V)"
 
   [ -z "$peer_ids" ] && warn "No peers configured (no WG_PEER_<ID>_PUBKEY vars found). Server will accept no connections."
 
@@ -275,7 +278,7 @@ if [ "$WG_ROLE" = "server" ]; then
 
     if [ -z "$peer_psk" ] && [ -n "$peer_psk_file" ]; then
       [ -f "$peer_psk_file" ] || die "WG_PEER_${id}_PSK_FILE points to non-existent file: '$peer_psk_file'."
-      peer_psk="$(tr -d '\r\n' < "$peer_psk_file")"
+      peer_psk="$(tr -d '[:space:]' < "$peer_psk_file")"
     fi
     [ -n "$peer_psk" ] && validate_wg_key "WG_PEER_${id}_PSK" "$peer_psk"
 
@@ -316,7 +319,7 @@ fi
 # --- Subcommand: showqr (exit before starting WireGuard) ---
 if [ "$_showqr" = "1" ]; then
   [ "$WG_ROLE" != "client" ] && die "showqr is only supported for WG_ROLE=client."
-  warn "The QR code encodes the private key — treat it as a secret."
+  warn "The QR code encodes the private key - treat it as a secret."
   log "Scan with the WireGuard app:"
   qrencode -t ansiutf8 < "$CFG"
   exit 0
@@ -328,7 +331,10 @@ wg-quick up "$WG_IFACE"
 
 cleanup() {
   log "Shutting down ${WG_IFACE}..."
-  kill "${MONITOR_PID:-}" 2>/dev/null || true
+  if [ -n "${MONITOR_PID:-}" ]; then
+    kill "${MONITOR_PID}" 2>/dev/null || true
+    wait "${MONITOR_PID}" 2>/dev/null || true
+  fi
   wg-quick down "$WG_IFACE" 2>/dev/null || true
 }
 trap cleanup INT TERM EXIT
@@ -343,7 +349,7 @@ if [ "$WG_ROLE" = "client" ]; then
   while [ $_attempts -lt 15 ]; do
     _hs="$(wg show "$WG_IFACE" latest-handshakes 2>/dev/null | awk 'NR==1{print $2}')"
     if [ -n "$_hs" ] && [ "$_hs" != "0" ]; then
-      log "Peer handshake established — tunnel is live."
+      log "Peer handshake established - tunnel is live."
       break
     fi
     _attempts=$(( _attempts + 1 ))
@@ -386,10 +392,8 @@ monitor_connection() {
   done
 }
 
-trap '' INT TERM
 monitor_connection &
 MONITOR_PID=$!
-trap cleanup INT TERM EXIT
 
 sleep infinity &
 wait $!

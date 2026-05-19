@@ -1,17 +1,6 @@
-# Full-tunnel: ALL client traffic is routed through the VPN server.
-# AllowedIPs=0.0.0.0/0 means every packet (including internet traffic) goes
-# through the tunnel. The server masquerades the traffic using its own IP.
-#
-# WG_POST_UP on the server: replace "eth0" with the server's outbound interface
-# (run `ip route | awk '/default/{print $5; exit}'` to find it).
-#
-# Keys: generate with  docker run --rm ivenos/compwire:latest genkey
-#
-# .env example:
-#   WG_SERVER_PRIV=<...>   WG_SERVER_PUB=<...>
-#   WG_CLIENT_PRIV=<...>   WG_CLIENT_PUB=<...>
-#   WG_OUTBOUND_IFACE=eth0
-#
+# Full-tunnel: all client traffic routed via the server, masqueraded to its outbound IP.
+# Find the outbound interface:  ip route | awk '/default/{print $5; exit}'
+# .env: WG_SERVER_PRIV, WG_SERVER_PUB, WG_CLIENT_PRIV, WG_CLIENT_PUB, WG_SERVER_HOST, WG_OUTBOUND_IFACE
 # Usage: docker compose -f examples/full-tunnel.yaml up
 
 services:

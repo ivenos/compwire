@@ -75,8 +75,7 @@ cleanup_mock_env() {
   rm -rf "$TMPDIR_TEST"
 }
 
-# Patches the config path and replaces sleep infinity with exit 0, then runs.
-# All output goes to stdout.txt; the exit code is preserved.
+# Patch config path, replace sleep-infinity with exit 0, then run.
 run_entrypoint() {
   _iface="$(printf '%s' "$1" | tr ' ' '\n' | grep '^WG_IFACE=' | cut -d= -f2)"
   CONFIG_FILE="$WG_CONFIG_DIR/${_iface:-wg0}.conf"
@@ -87,8 +86,6 @@ run_entrypoint() {
   # shellcheck disable=SC2086
   env -i PATH="$PATH" $1 sh "$PATCHED" > "$TMPDIR_TEST/stdout.txt" 2>&1
 }
-
-# ---------------------------------------------------------------------------
 
 echo ""
 echo "=== Test 1: Server - no peers (warning, interface block written) ==="
@@ -366,8 +363,7 @@ cleanup_mock_env
 echo ""
 echo "=== Test 25: Hooks written to [Interface] ==="
 setup_mock_env
-# Hook values are single words here because run_entrypoint passes $1 unquoted.
-# Real usage supports full commands (e.g. "iptables -A FORWARD -j ACCEPT").
+# Hook values must be single words: run_entrypoint passes $1 unquoted.
 run_entrypoint "WG_ROLE=server WG_PRIVATE_KEY=FAKEPRIV123 WG_PRE_UP=do-preup WG_POST_UP=do-postup WG_PRE_DOWN=do-predown WG_POST_DOWN=do-postdown" || true
 assert_contains "PreUp present"    "PreUp      = do-preup"    "$CONFIG_FILE"
 assert_contains "PostUp present"   "PostUp     = do-postup"   "$CONFIG_FILE"

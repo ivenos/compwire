@@ -1,17 +1,6 @@
-# Client connecting to a server via an IPv6 endpoint.
-# The WireGuard tunnel itself carries IPv4 VPN traffic (10.77.0.x);
-# only the transport (outer UDP packet) uses IPv6.
-#
-# Requires the server to be reachable at an IPv6 address.
-# IPv6 endpoints must use bracket notation: [address]:port
-#
-# Keys: generate with  docker run --rm ivenos/compwire:latest genkey
-#
-# .env example:
-#   WG_SERVER_PRIV=<...>   WG_SERVER_PUB=<...>
-#   WG_CLIENT_PRIV=<...>   WG_CLIENT_PUB=<...>
-#   WG_SERVER_IPV6=2001:db8::1   (replace with real IPv6 address)
-#
+# Client → server via IPv6 transport (tunnel still carries IPv4).
+# IPv6 endpoints need bracket notation: [address]:port
+# .env: WG_SERVER_PRIV/PUB, WG_CLIENT_PRIV/PUB, WG_SERVER_IPV6
 # Usage: docker compose -f examples/ipv6-endpoint.yaml up
 
 services:

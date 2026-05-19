@@ -1,16 +1,7 @@
-# Server + two clients. Client2 uses a preshared key for additional authentication.
-# WG_POST_UP/DOWN add iptables FORWARD rules so clients can reach each other
-# through the server (client-to-client routing).
-#
-# Keys: generate with  docker run --rm ivenos/compwire:latest genkey
-#       Run once per role. PSK: openssl rand -base64 32
-#
-# .env example:
-#   WG_SERVER_PRIV=<server-private-key>   WG_SERVER_PUB=<server-public-key>
-#   WG_CLIENT1_PRIV=<...>                 WG_CLIENT1_PUB=<...>
-#   WG_CLIENT2_PRIV=<...>                 WG_CLIENT2_PUB=<...>
-#   WG_PSK=<preshared-key>
-#
+# Server + two clients (client2 with PSK). FORWARD rules enable client-to-client routing.
+# Generate keys: docker run --rm ivenos/compwire:latest genkey
+# Generate PSK:  openssl rand -base64 32
+# .env: WG_SERVER_PRIV/PUB, WG_CLIENT1_PRIV/PUB, WG_CLIENT2_PRIV/PUB, WG_PSK
 # Usage: docker compose -f examples/multi-client.yaml up
 
 services:

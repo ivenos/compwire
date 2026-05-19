@@ -45,12 +45,12 @@ Peer IDs (`<ID>`) must be uppercase alphanumeric, e.g. `LAPTOP`, `NODE1`.
 | `WG_PEER_<ID>_PSK` | | - | Pre-shared key for this peer |
 | `WG_PEER_<ID>_PSK_FILE` | | - | Path to file containing the peer PSK |
 | `WG_PEER_<ID>_ENDPOINT` | | - | Peer endpoint `host:port` - enables server-initiated connections to peers with a static IP |
-| `WG_PEER_<ID>_KEEPALIVE` | | - | PersistentKeepalive for this peer in seconds (1–65535) |
+| `WG_PEER_<ID>_KEEPALIVE` | | - | PersistentKeepalive for this peer in seconds (1-65535) |
 | `WG_ADDRESS` | | `10.77.0.1/24` | Interface address(es). Comma-separated, supports IPv4, IPv6, and dual-stack (e.g. `10.77.0.1/24,fd00::1/64`) |
-| `WG_PORT` | | `51820` | UDP listen port (1–65535) |
+| `WG_PORT` | | `51820` | UDP listen port (1-65535) |
 | `WG_IFACE` | | `wg0` | Interface name (alphanumeric, `-`, `_`) |
 | `WG_DNS` | | - | DNS servers and/or search domains, comma-separated (e.g. `1.1.1.1,8.8.8.8`) |
-| `WG_MTU` | | - | Interface MTU (1280–9000) |
+| `WG_MTU` | | - | Interface MTU (1280-9000) |
 | `WG_TABLE` | | - | Routing table: `auto`, `off`, or a numeric table ID |
 | `WG_PRE_UP` | | - | Shell command to run before the interface comes up |
 | `WG_POST_UP` | | - | Shell command to run after the interface comes up |
@@ -71,14 +71,14 @@ Peer IDs (`<ID>`) must be uppercase alphanumeric, e.g. `LAPTOP`, `NODE1`.
 | `WG_SERVER_PUBKEY` | ✔️ | - | Server public key |
 | `WG_SERVER_ENDPOINT` | ✔️ | - | Server address in `host:port` format |
 | `WG_ADDRESS` | | `10.77.0.2/24` | Interface address(es). Comma-separated, supports IPv4, IPv6, and dual-stack |
-| `WG_PORT` | | `51820` | UDP listen port (1–65535) |
+| `WG_PORT` | | `51820` | UDP listen port (1-65535) |
 | `WG_IFACE` | | `wg0` | Interface name (alphanumeric, `-`, `_`) |
 | `WG_ALLOWED_IPS` | | `10.77.0.1/32` | Routes to send through the tunnel. Use `0.0.0.0/0` for a full tunnel |
-| `WG_KEEPALIVE` | | `25` | PersistentKeepalive in seconds (1–65535) |
+| `WG_KEEPALIVE` | | `25` | PersistentKeepalive in seconds (1-65535) |
 | `WG_PSK` | | - | Pre-shared key |
 | `WG_PSK_FILE` | | - | Path to file containing the PSK |
 | `WG_DNS` | | - | DNS servers and/or search domains, comma-separated |
-| `WG_MTU` | | - | Interface MTU (1280–9000) |
+| `WG_MTU` | | - | Interface MTU (1280-9000) |
 | `WG_TABLE` | | - | Routing table: `auto`, `off`, or a numeric table ID |
 | `WG_PRE_UP` | | - | Shell command to run before the interface comes up |
 | `WG_POST_UP` | | - | Shell command to run after the interface comes up |

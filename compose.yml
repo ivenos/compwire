@@ -1,16 +1,8 @@
 # Quick-start: one server and one client on the same host.
-#
-# 1. Generate a keypair for the server and one for the client:
-#      docker run --rm ivenos/compwire:latest genkey
-#
-# 2. Replace every <...> placeholder below with the matching value.
-#
-# 3. Start:
-#      docker compose up -d
-#      docker compose logs -f
-#
-# In production each node runs on its own host.
-# See examples/ for multi-client, full-tunnel, and IPv6 setups.
+# 1. docker run --rm ivenos/compwire:latest genkey  (once per node)
+# 2. Fill in the <...> placeholders below
+# 3. docker compose up -d
+# In production each node runs on its own host. See examples/ for more setups.
 
 services:
   server:
