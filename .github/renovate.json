@@ -1,31 +1,21 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended"
-  ],
-  "labels": [
-    "dependencies"
-  ],
+  "extends": ["config:recommended"],
+  "dependencyDashboard": false,
+  "labels": ["dependencies"],
   "packageRules": [
     {
-      "commitMessagePrefix": "ci:",
+      "matchManagers": ["github-actions"],
       "groupName": "GitHub Actions",
-      "matchManagers": [
-        "github-actions"
-      ]
+      "commitMessagePrefix": "ci:"
     },
     {
-      "commitMessagePrefix": "docker:",
-      "matchManagers": [
-        "dockerfile",
-        "docker-compose"
-      ]
+      "matchManagers": ["dockerfile", "docker-compose"],
+      "commitMessagePrefix": "build(docker):"
     },
     {
-      "enabled": false,
-      "matchPackageNames": [
-        "ghcr.io/ivenos/compwire"
-      ]
+      "matchPackageNames": ["ivenos/compwire"],
+      "enabled": false
     }
   ]
 }
