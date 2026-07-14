@@ -12,6 +12,11 @@ env:
   GITHUB_IMAGE: ghcr.io/ivenos/compwire
   DOCKERHUB_IMAGE: ivenos/compwire
 
+# One run per ref: PRs cancel superseded runs; pushes queue so publishes never interleave.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # Least privilege by default; jobs that publish opt into more below.
 permissions:
   contents: read

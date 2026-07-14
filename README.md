@@ -71,7 +71,7 @@ Peer IDs (`<ID>`) must be uppercase alphanumeric, e.g. `LAPTOP`, `NODE1`.
 | `WG_SERVER_PUBKEY` | ✔️ | - | Server public key |
 | `WG_SERVER_ENDPOINT` | ✔️ | - | Server address in `host:port` format |
 | `WG_ADDRESS` | | `10.77.0.2/24` | Interface address(es). Comma-separated, supports IPv4, IPv6, and dual-stack |
-| `WG_PORT` | | `51820` | UDP listen port (1-65535) |
+| `WG_PORT` | | - | UDP listen port (1-65535). If unset, the kernel picks a free port |
 | `WG_IFACE` | | `wg0` | Interface name (alphanumeric, `-`, `_`) |
 | `WG_ALLOWED_IPS` | | `10.77.0.1/32` | Routes to send through the tunnel. Use `0.0.0.0/0` for a full tunnel |
 | `WG_KEEPALIVE` | | `25` | PersistentKeepalive in seconds (1-65535) |
@@ -129,8 +129,8 @@ docker exec <client-container> /entrypoint.sh showqr
 - Hook commands (`PRE_UP`, `POST_UP`, `PRE_DOWN`, `POST_DOWN`) run as root inside the container. Use `%i` as a placeholder for the interface name (substituted by wg-quick).
 - The server healthcheck verifies the interface is up. The client healthcheck additionally checks for a recent peer handshake (≤ 185 s).
 - The container logs the initial peer connection state after 30 s and any subsequent changes (full connectivity, partial, or disconnected).
-- **IP forwarding** is a host kernel setting, not a container setting. If the server acts as a gateway (e.g. clients use `WG_ALLOWED_IPS=0.0.0.0/0`), enable it on the host: `sysctl -w net.ipv4.ip_forward=1` (persist via `/etc/sysctl.conf` or `/etc/sysctl.d/`).
-- With `network_mode: host`, all services in the same Compose file share the host network stack and therefore need distinct `WG_IFACE` values (e.g. `wg0`, `wg1`, `wg2`). In production each node runs on its own host, so this does not apply.
+- **IP forwarding** is a host kernel setting, not a container setting. If the server routes traffic between peers (full tunnel with `WG_ALLOWED_IPS=0.0.0.0/0`, or client-to-client as in the multi-client example), enable it on the host: `sysctl -w net.ipv4.ip_forward=1` (persist via `/etc/sysctl.conf` or `/etc/sysctl.d/`). The iptables `FORWARD` rules in the examples are not sufficient on their own.
+- With `network_mode: host`, all services in the same Compose file share the host network stack and therefore need distinct `WG_IFACE` values (e.g. `wg0`, `wg1`, `wg2`). Clients don't bind a fixed port unless `WG_PORT` is set; multiple servers additionally need distinct `WG_PORT` values. In production each node runs on its own host, so this does not apply.
 
 ---
 

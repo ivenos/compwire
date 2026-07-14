@@ -33,17 +33,44 @@ validate_cidr() {
         *[!0-9a-fA-F:]*) die "$_label is not a valid IPv6 address in '$_cidr'." ;;
       esac
       case "$_ip" in
+        *:::*) die "$_label is not a valid IPv6 address in '$_cidr' (':::')." ;;
+      esac
+      case "$_ip" in
         *::*::*) die "$_label is not a valid IPv6 address in '$_cidr' (multiple '::')." ;;
+      esac
+      case "$_ip" in
+        ::*) ;;
+        :*) die "$_label is not a valid IPv6 address in '$_cidr' (leading single ':')." ;;
+      esac
+      case "$_ip" in
+        *::) ;;
+        *:) die "$_label is not a valid IPv6 address in '$_cidr' (trailing single ':')." ;;
       esac
       _colon_count=$(printf '%s' "$_ip" | tr -cd ':' | wc -c | tr -d ' ')
       if [ "$_colon_count" -gt 7 ]; then
         die "$_label is not a valid IPv6 address in '$_cidr' (too many colons)."
       fi
+      case "$_ip" in
+        *::*) ;;
+        *)
+          if [ "$_colon_count" -ne 7 ]; then
+            die "$_label is not a valid IPv6 address in '$_cidr' (fewer than 8 groups without '::')."
+          fi
+          ;;
+      esac
+      _gIFS="$IFS"; IFS=':'
+      for _group in $_ip; do
+        case "$_group" in
+          ?????*) die "$_label is not a valid IPv6 address in '$_cidr' (group '$_group' too long)." ;;
+        esac
+      done
+      IFS="$_gIFS"
       ;;
     *)
       [ "$_prefix" -gt 32 ] && die "$_label prefix must be 0-32, got: '$_cidr'."
       printf '%s' "$_ip" | awk -F. '
         NF!=4 { exit 1 }
+        $1=="" || $2=="" || $3=="" || $4=="" { exit 1 }
         $1~/[^0-9]/ || $2~/[^0-9]/ || $3~/[^0-9]/ || $4~/[^0-9]/ { exit 1 }
         $1>255 || $2>255 || $3>255 || $4>255 { exit 1 }
       ' || die "$_label must be a valid IPv4 CIDR (e.g. 10.0.0.1/24), got: '$_cidr'."
@@ -101,13 +128,16 @@ validate_dns() {
   esac
 }
 
-# Validate a WireGuard key or PSK: non-empty, base64 chars only.
+# Validate a WireGuard key or PSK: 44 base64 chars (32 bytes).
 validate_wg_key() {
   _label="$1" _key="$2"
   [ -z "$_key" ] && die "$_label is empty."
   case "$_key" in
     *[!A-Za-z0-9+/=]*) die "$_label contains invalid characters (must be base64)." ;;
   esac
+  if [ "${#_key}" -ne 44 ]; then
+    die "$_label must be a 44-character base64 WireGuard key (got ${#_key} characters)."
+  fi
 }
 
 # Validate keepalive: integer 1-65535.
@@ -169,7 +199,12 @@ fi
 validate_wg_key "WG_PRIVATE_KEY" "$WG_PRIVATE_KEY"
 
 # --- Optional [Interface] variables ---
-WG_PORT="${WG_PORT:-51820}"
+# Clients get no ListenPort unless WG_PORT is set - avoids port clashes on a shared network stack.
+if [ "$WG_ROLE" = "server" ]; then
+  WG_PORT="${WG_PORT:-51820}"
+else
+  WG_PORT="${WG_PORT:-}"
+fi
 WG_IFACE="${WG_IFACE:-wg0}"
 WG_MTU="${WG_MTU:-}"
 WG_TABLE="${WG_TABLE:-}"
@@ -179,11 +214,13 @@ WG_POST_UP="${WG_POST_UP:-}"
 WG_PRE_DOWN="${WG_PRE_DOWN:-}"
 WG_POST_DOWN="${WG_POST_DOWN:-}"
 
-case "$WG_PORT" in
-  ''|*[!0-9]*) die "WG_PORT must be a number (got: '$WG_PORT')." ;;
-esac
-if [ "$WG_PORT" -lt 1 ] || [ "$WG_PORT" -gt 65535 ]; then
-  die "WG_PORT must be 1-65535 (got: $WG_PORT)."
+if [ -n "$WG_PORT" ]; then
+  case "$WG_PORT" in
+    *[!0-9]*) die "WG_PORT must be a number (got: '$WG_PORT')." ;;
+  esac
+  if [ "$WG_PORT" -lt 1 ] || [ "$WG_PORT" -gt 65535 ]; then
+    die "WG_PORT must be 1-65535 (got: $WG_PORT)."
+  fi
 fi
 
 case "$WG_IFACE" in
@@ -242,7 +279,7 @@ CFG="/etc/wireguard/${WG_IFACE}.conf"
 {
   printf '[Interface]\n'
   printf '%-11s= %s\n' "Address"    "$WG_ADDRESS"
-  printf '%-11s= %s\n' "ListenPort" "$WG_PORT"
+  [ -n "$WG_PORT" ] && printf '%-11s= %s\n' "ListenPort" "$WG_PORT"
   printf '%-11s= %s\n' "PrivateKey" "$WG_PRIVATE_KEY"
   [ -n "$WG_DNS"       ] && printf '%-11s= %s\n' "DNS"      "$WG_DNS"
   [ -n "$WG_MTU"       ] && printf '%-11s= %s\n' "MTU"      "$WG_MTU"
@@ -259,6 +296,12 @@ unset WG_PRIVATE_KEY
 if [ "$WG_ROLE" = "server" ]; then
   # Discover peers from WG_PEER_<ID>_PUBKEY env vars; ID = [A-Z0-9]+, no underscores.
   peer_ids="$(env | grep -E '^WG_PEER_[A-Z0-9]+_PUBKEY=' | sed 's/^WG_PEER_//;s/_PUBKEY=.*//' | sort -V)"
+
+  # Reject peer vars whose ID would otherwise be silently ignored.
+  bad_peer_vars="$(env | grep -E '^WG_PEER_.*_PUBKEY=' | grep -Ev '^WG_PEER_[A-Z0-9]+_PUBKEY=' | sed 's/=.*//' | sort)"
+  if [ -n "$bad_peer_vars" ]; then
+    die "Invalid peer ID in: $(printf '%s' "$bad_peer_vars" | tr '\n' ' ')- peer IDs must be uppercase alphanumeric (e.g. WG_PEER_NODE1_PUBKEY)."
+  fi
 
   [ -z "$peer_ids" ] && warn "No peers configured (no WG_PEER_<ID>_PUBKEY vars found). Server will accept no connections."
 
