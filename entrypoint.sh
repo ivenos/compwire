@@ -1,21 +1,47 @@
 #!/bin/sh
 set -eu
+# No globbing: values are field-split in a few places and must not expand to filenames.
+set -f
 
 log()  { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"; }
 warn() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] WARNING: $*" >&2; }
 die()  { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ERROR: $*" >&2; exit 1; }
 
-# --- Subcommand: genkey ---
-if [ "${1:-}" = "genkey" ]; then
-  priv=$(wg genkey)
-  pub=$(printf '%s' "$priv" | wg pubkey)
-  printf 'PRIVATE_KEY=%s\nPUBLIC_KEY=%s\n' "$priv" "$pub"
-  exit 0
+# --- Subcommands ---
+case "${1:-}" in
+  genkey)
+    priv=$(wg genkey)
+    pub=$(printf '%s' "$priv" | wg pubkey)
+    printf 'PRIVATE_KEY=%s\nPUBLIC_KEY=%s\n' "$priv" "$pub"
+    exit 0
+    ;;
+  genpsk)
+    wg genpsk
+    exit 0
+    ;;
+  ''|showqr) ;;
+  *) die "Unknown argument: '$1'. Supported: genkey, genpsk, showqr." ;;
+esac
+
+# Reject the role here, before a config holding the private key is written.
+_showqr=0
+if [ "${1:-}" = "showqr" ]; then
+  _showqr=1
+  [ "${WG_ROLE:-}" = "client" ] || die "showqr is only supported for WG_ROLE=client."
 fi
 
-# --- Subcommand: showqr ---
-_showqr=0
-[ "${1:-}" = "showqr" ] && _showqr=1
+# Validate an unsigned integer in [min,max]. The length check comes first because
+# busybox test errors out on values beyond 64 bits instead of comparing them,
+# and that error would otherwise pass for "in range".
+validate_uint() {
+  _label="$1" _val="$2" _min="$3" _max="$4" _ctx="${5:-$2}"
+  case "$_val" in
+    ''|*[!0-9]*) die "$_label must be a number (got: '$_ctx')." ;;
+  esac
+  if [ "${#_val}" -gt "${#_max}" ] || [ "$_val" -lt "$_min" ] || [ "$_val" -gt "$_max" ]; then
+    die "$_label must be ${_min}-${_max} (got: '$_ctx')."
+  fi
+}
 
 # Validate a single IPv4 or IPv6 CIDR.
 validate_cidr() {
@@ -23,12 +49,10 @@ validate_cidr() {
   _ip="${_cidr%/*}" _prefix="${_cidr#*/}"
   [ "$_ip" = "$_cidr" ] && \
     die "$_label must be in CIDR notation (e.g. 10.0.0.1/24 or fd00::1/64), got: '$_cidr'."
-  case "$_prefix" in
-    ''|*[!0-9]*) die "$_label prefix must be a number, got: '$_cidr'." ;;
-  esac
+  [ -z "$_ip" ] && die "$_label has an empty address in '$_cidr'."
   case "$_ip" in
     *:*)
-      [ "$_prefix" -gt 128 ] && die "$_label IPv6 prefix must be 0-128, got: '$_cidr'."
+      validate_uint "$_label IPv6 prefix" "$_prefix" 0 128 "$_cidr"
       case "$_ip" in
         *[!0-9a-fA-F:]*) die "$_label is not a valid IPv6 address in '$_cidr'." ;;
       esac
@@ -67,7 +91,7 @@ validate_cidr() {
       IFS="$_gIFS"
       ;;
     *)
-      [ "$_prefix" -gt 32 ] && die "$_label prefix must be 0-32, got: '$_cidr'."
+      validate_uint "$_label prefix" "$_prefix" 0 32 "$_cidr"
       printf '%s' "$_ip" | awk -F. '
         NF!=4 { exit 1 }
         $1=="" || $2=="" || $3=="" || $4=="" { exit 1 }
@@ -81,10 +105,19 @@ validate_cidr() {
 # Validate a comma-separated list of IPv4 or IPv6 CIDRs (e.g. WG_ADDRESS).
 validate_cidr_list() {
   _label="$1" _list="$2"
+  validate_no_newline "$_label" "$_list"
   _oIFS="$IFS"; IFS=','
   # shellcheck disable=SC2086
   for _entry in $_list; do
-    _entry="${_entry# }"; _entry="${_entry% }"
+    # "10.0.0.1/24,  10.0.0.2/24" is a natural way to write a list, so strip any
+    # amount of padding rather than a single space.
+    while :; do
+      case "$_entry" in
+        ' '*) _entry="${_entry# }" ;;
+        *' ') _entry="${_entry% }" ;;
+        *)    break ;;
+      esac
+    done
     [ -z "$_entry" ] && die "$_label contains an empty entry in '$_list'."
     validate_cidr "$_label" "$_entry"
   done
@@ -93,23 +126,16 @@ validate_cidr_list() {
 
 # Validate MTU: integer 1280-9000.
 validate_mtu() {
-  case "$1" in
-    ''|*[!0-9]*) die "WG_MTU must be a number (got: '$1')." ;;
-  esac
-  if [ "$1" -lt 1280 ] || [ "$1" -gt 9000 ]; then
-    die "WG_MTU must be 1280-9000 (got: $1)."
-  fi
+  validate_uint "WG_MTU" "$1" 1280 9000
 }
 
-# Validate Table: 'auto', 'off', or a positive routing table ID.
+# Validate Table: 'auto', 'off', or a routing table ID (32-bit).
 validate_table() {
   case "$1" in
     auto|off) return 0 ;;
     ''|*[!0-9]*) die "WG_TABLE must be 'auto', 'off', or a positive integer (got: '$1')." ;;
   esac
-  if [ "$1" -lt 1 ]; then
-    die "WG_TABLE as integer must be >= 1 (got: '$1')."
-  fi
+  validate_uint "WG_TABLE" "$1" 1 4294967295
 }
 
 # Reject newlines - would inject extra wg-quick config keys.
@@ -122,7 +148,6 @@ validate_no_newline() {
 
 # Validate DNS: allowlist for IPs, hostnames, comma/space separators.
 validate_dns() {
-  [ -z "$1" ] && die "WG_DNS is set but empty."
   case "$1" in
     *[!A-Za-z0-9.:,\ -]*) die "WG_DNS contains invalid characters: '$1'." ;;
   esac
@@ -138,17 +163,19 @@ validate_wg_key() {
   if [ "${#_key}" -ne 44 ]; then
     die "$_label must be a 44-character base64 WireGuard key (got ${#_key} characters)."
   fi
+  # 32 bytes encode to 43 base64 chars plus exactly one '=' pad at the end.
+  case "$_key" in
+    *=) ;;
+    *) die "$_label must be a base64 WireGuard key ending in '='." ;;
+  esac
+  case "${_key%=}" in
+    *[!A-Za-z0-9+/]*) die "$_label has misplaced '=' padding (must be base64)." ;;
+  esac
 }
 
 # Validate keepalive: integer 1-65535.
 validate_keepalive() {
-  _label="$1" _val="$2"
-  case "$_val" in
-    ''|*[!0-9]*) die "$_label must be a number (got: '$_val')." ;;
-  esac
-  if [ "$_val" -lt 1 ] || [ "$_val" -gt 65535 ]; then
-    die "$_label must be 1-65535 (got: '$_val')."
-  fi
+  validate_uint "$1" "$2" 1 65535
 }
 
 # Validate endpoint: host:port or [ipv6]:port.
@@ -174,12 +201,7 @@ validate_endpoint() {
       die "$_label must be in host:port format (got: '$_ep')."
       ;;
   esac
-  case "$_port" in
-    ''|*[!0-9]*) die "$_label port must be a number (got: '$_ep')." ;;
-  esac
-  if [ "$_port" -lt 1 ] || [ "$_port" -gt 65535 ]; then
-    die "$_label port must be 1-65535 (got: '$_ep')."
-  fi
+  validate_uint "$_label port" "$_port" 1 65535 "$_ep"
 }
 
 # --- Required variables ---
@@ -194,6 +216,8 @@ esac
 if [ -z "${WG_PRIVATE_KEY:-}" ] && [ -n "${WG_PRIVATE_KEY_FILE:-}" ]; then
   [ -f "$WG_PRIVATE_KEY_FILE" ] || die "WG_PRIVATE_KEY_FILE points to non-existent file: '$WG_PRIVATE_KEY_FILE'."
   WG_PRIVATE_KEY="$(tr -d '[:space:]' < "$WG_PRIVATE_KEY_FILE")"
+  # An unpopulated secret mount must fail, not fall through to the "not set" message.
+  [ -z "$WG_PRIVATE_KEY" ] && die "WG_PRIVATE_KEY_FILE is empty: '$WG_PRIVATE_KEY_FILE'."
 fi
 [ -z "${WG_PRIVATE_KEY:-}" ] && die "WG_PRIVATE_KEY (or WG_PRIVATE_KEY_FILE) is not set."
 validate_wg_key "WG_PRIVATE_KEY" "$WG_PRIVATE_KEY"
@@ -214,14 +238,7 @@ WG_POST_UP="${WG_POST_UP:-}"
 WG_PRE_DOWN="${WG_PRE_DOWN:-}"
 WG_POST_DOWN="${WG_POST_DOWN:-}"
 
-if [ -n "$WG_PORT" ]; then
-  case "$WG_PORT" in
-    *[!0-9]*) die "WG_PORT must be a number (got: '$WG_PORT')." ;;
-  esac
-  if [ "$WG_PORT" -lt 1 ] || [ "$WG_PORT" -gt 65535 ]; then
-    die "WG_PORT must be 1-65535 (got: $WG_PORT)."
-  fi
-fi
+[ -n "$WG_PORT" ] && validate_uint "WG_PORT" "$WG_PORT" 1 65535
 
 case "$WG_IFACE" in
   *[!a-zA-Z0-9_-]*) die "WG_IFACE contains invalid characters: '$WG_IFACE'." ;;
@@ -243,6 +260,9 @@ validate_no_newline "WG_POST_DOWN" "$WG_POST_DOWN"
 # --- Role-specific variables ---
 if [ "$WG_ROLE" = "server" ]; then
   WG_ADDRESS="${WG_ADDRESS:-10.77.0.1/24}"
+  if [ -n "${WG_PSK:-}${WG_PSK_FILE:-}" ]; then
+    warn "WG_PSK/WG_PSK_FILE is ignored for WG_ROLE=server. Use WG_PEER_<ID>_PSK per peer."
+  fi
 else
   WG_ADDRESS="${WG_ADDRESS:-10.77.0.2/24}"
   WG_SERVER_PUBKEY="${WG_SERVER_PUBKEY:-}"
@@ -261,6 +281,8 @@ else
   if [ -z "${WG_PSK:-}" ] && [ -n "${WG_PSK_FILE:-}" ]; then
     [ -f "$WG_PSK_FILE" ] || die "WG_PSK_FILE points to non-existent file: '$WG_PSK_FILE'."
     WG_PSK="$(tr -d '[:space:]' < "$WG_PSK_FILE")"
+    # Silently dropping the PSK here would leave the tunnel up without it.
+    [ -z "$WG_PSK" ] && die "WG_PSK_FILE is empty: '$WG_PSK_FILE'."
   fi
   [ -n "${WG_PSK:-}" ] && validate_wg_key "WG_PSK" "$WG_PSK"
 fi
@@ -271,10 +293,13 @@ WG_PUBLIC_KEY="$(printf '%s' "$WG_PRIVATE_KEY" | wg pubkey)"
 log "Role: $WG_ROLE | Address: $WG_ADDRESS | Public key: $WG_PUBLIC_KEY"
 
 # --- Write WireGuard config ---
-# umask 077: file never world-readable, even before the explicit chmod 600 below.
+# umask 077 only covers files this script creates. A config left over from an
+# earlier run keeps its own mode, so lock it down before the key is written.
 umask 077
 mkdir -p /etc/wireguard
 CFG="/etc/wireguard/${WG_IFACE}.conf"
+: > "$CFG"
+chmod 600 "$CFG"
 
 {
   printf '[Interface]\n'
@@ -290,18 +315,33 @@ CFG="/etc/wireguard/${WG_IFACE}.conf"
   [ -n "$WG_POST_DOWN" ] && printf '%-11s= %s\n' "PostDown" "$WG_POST_DOWN"
 } > "$CFG"
 
-chmod 600 "$CFG"
+# Not a scrub: the value stays in /proc/1/environ and in `docker inspect`. It only
+# keeps the key out of the environment wg-quick and the hook commands inherit.
 unset WG_PRIVATE_KEY
 
 if [ "$WG_ROLE" = "server" ]; then
-  # Discover peers from WG_PEER_<ID>_PUBKEY env vars; ID = [A-Z0-9]+, no underscores.
-  peer_ids="$(env | grep -E '^WG_PEER_[A-Z0-9]+_PUBKEY=' | sed 's/^WG_PEER_//;s/_PUBKEY=.*//' | sort -V)"
-
-  # Reject peer vars whose ID would otherwise be silently ignored.
-  bad_peer_vars="$(env | grep -E '^WG_PEER_.*_PUBKEY=' | grep -Ev '^WG_PEER_[A-Z0-9]+_PUBKEY=' | sed 's/=.*//' | sort)"
-  if [ -n "$bad_peer_vars" ]; then
-    die "Invalid peer ID in: $(printf '%s' "$bad_peer_vars" | tr '\n' ' ')- peer IDs must be uppercase alphanumeric (e.g. WG_PEER_NODE1_PUBKEY)."
-  fi
+  # Every WG_PEER_* variable is claimed here. A name that is not recognised is a
+  # typo, and staying silent about it would drop the peer from the config.
+  PEER_ATTRS="PUBKEY ALLOWED_IPS PSK PSK_FILE ENDPOINT KEEPALIVE"
+  peer_ids=""
+  for _var in $(env | sed -n 's/^\(WG_PEER_[^=]*\)=.*/\1/p' | sort); do
+    _rest="${_var#WG_PEER_}"
+    _id="${_rest%%_*}"
+    _attr="${_rest#*_}"
+    case " $PEER_ATTRS " in
+      *" $_attr "*) ;;
+      *) die "Unknown peer variable '${_var}'. Expected WG_PEER_<ID>_<ATTR> with ATTR one of: ${PEER_ATTRS}." ;;
+    esac
+    case "$_id" in
+      ''|*[!A-Z0-9]*) die "Invalid peer ID in '${_var}' - peer IDs must be uppercase alphanumeric (e.g. WG_PEER_NODE1_PUBKEY)." ;;
+    esac
+    case " $peer_ids " in
+      *" $_id "*) ;;
+      *) peer_ids="${peer_ids}${peer_ids:+ }${_id}" ;;
+    esac
+  done
+  # shellcheck disable=SC2086
+  peer_ids="$(printf '%s\n' $peer_ids | sort -V)"
 
   [ -z "$peer_ids" ] && warn "No peers configured (no WG_PEER_<ID>_PUBKEY vars found). Server will accept no connections."
 
@@ -314,7 +354,7 @@ if [ "$WG_ROLE" = "server" ]; then
     peer_endpoint="$(printenv "WG_PEER_${id}_ENDPOINT" || true)"
     peer_keepalive="$(printenv "WG_PEER_${id}_KEEPALIVE" || true)"
 
-    [ -z "$peer_pubkey" ] && die "WG_PEER_${id}_PUBKEY is empty."
+    [ -z "$peer_pubkey" ] && die "WG_PEER_${id}_PUBKEY is not set or empty, but other WG_PEER_${id}_* variables are present."
     validate_wg_key "WG_PEER_${id}_PUBKEY" "$peer_pubkey"
     [ -z "$peer_allowed" ] && die "WG_PEER_${id}_ALLOWED_IPS is not set."
     validate_cidr_list "WG_PEER_${id}_ALLOWED_IPS" "$peer_allowed"
@@ -322,6 +362,7 @@ if [ "$WG_ROLE" = "server" ]; then
     if [ -z "$peer_psk" ] && [ -n "$peer_psk_file" ]; then
       [ -f "$peer_psk_file" ] || die "WG_PEER_${id}_PSK_FILE points to non-existent file: '$peer_psk_file'."
       peer_psk="$(tr -d '[:space:]' < "$peer_psk_file")"
+      [ -z "$peer_psk" ] && die "WG_PEER_${id}_PSK_FILE is empty: '$peer_psk_file'."
     fi
     [ -n "$peer_psk" ] && validate_wg_key "WG_PEER_${id}_PSK" "$peer_psk"
 
@@ -361,7 +402,6 @@ fi
 
 # --- Subcommand: showqr (exit before starting WireGuard) ---
 if [ "$_showqr" = "1" ]; then
-  [ "$WG_ROLE" != "client" ] && die "showqr is only supported for WG_ROLE=client."
   warn "The QR code encodes the private key - treat it as a secret."
   log "Scan with the WireGuard app:"
   qrencode -t ansiutf8 < "$CFG"
@@ -369,10 +409,10 @@ if [ "$_showqr" = "1" ]; then
 fi
 
 # --- Start WireGuard ---
-log "Starting WireGuard (${WG_ROLE}) on ${WG_ADDRESS}..."
-wg-quick up "$WG_IFACE"
-
 cleanup() {
+  # Clearing the traps first makes this run once, whether it was reached by
+  # signal or by the EXIT trap afterwards.
+  trap - INT TERM EXIT
   log "Shutting down ${WG_IFACE}..."
   if [ -n "${MONITOR_PID:-}" ]; then
     kill "${MONITOR_PID}" 2>/dev/null || true
@@ -380,7 +420,29 @@ cleanup() {
   fi
   wg-quick down "$WG_IFACE" 2>/dev/null || true
 }
-trap cleanup INT TERM EXIT
+# A returning handler resumes the script where it was interrupted, so the signal
+# path has to exit by itself instead of falling back into the startup sequence.
+on_signal() { cleanup; exit 143; }
+
+# Under network_mode: host the interface lives in the host netns and survives a
+# SIGKILLed container. wg-quick refuses to start while it is there. This runs
+# before the traps: tearing down an interface that is not ours would be worse
+# than refusing to start.
+if ip link show dev "$WG_IFACE" >/dev/null 2>&1; then
+  if [ "$(wg show "$WG_IFACE" public-key 2>/dev/null || true)" = "$WG_PUBLIC_KEY" ]; then
+    warn "Interface ${WG_IFACE} is a leftover from an earlier run; removing it."
+    ip link del "$WG_IFACE"
+  else
+    die "Interface ${WG_IFACE} already exists and belongs to something else. Pick a free name via WG_IFACE."
+  fi
+fi
+
+# Installed before bring-up so a signal mid-way still tears the interface down.
+trap on_signal INT TERM
+trap cleanup EXIT
+
+log "Starting WireGuard (${WG_ROLE}) on ${WG_ADDRESS}..."
+wg-quick up "$WG_IFACE"
 
 wg show "$WG_IFACE" >/dev/null 2>&1 || die "WireGuard interface ${WG_IFACE} failed to start."
 log "Interface ${WG_IFACE} is up (port $(wg show "$WG_IFACE" listen-port))."

@@ -56,6 +56,25 @@ scenario_add() {
   _CONTAINERS="${_CONTAINERS:+$_CONTAINERS }$1"
 }
 
+# Under set -e any failing docker command aborts mid-scenario, so cleanup cannot
+# rely on being reached in order.
+trap scenario_cleanup EXIT INT TERM
+
+# Poll the container's own HEALTHCHECK rather than re-implementing it here.
+assert_healthy() {
+  _c="$1" _label="$2" _waited=0
+  while [ "$_waited" -lt 90 ]; do
+    _status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$_c" 2>/dev/null || echo missing)"
+    case "$_status" in
+      healthy)          ok "$_label (docker health: healthy)"; return 0 ;;
+      none|missing)     fail "$_label -- no healthcheck reported by docker"; return 0 ;;
+    esac
+    sleep 3
+    _waited=$(( _waited + 3 ))
+  done
+  fail "$_label -- still '$_status' after ${_waited}s"
+}
+
 # --- Build image if missing ---
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   log "Image '$IMAGE' not found - building..."
@@ -148,20 +167,8 @@ for _c in "$SRV" "$CL"; do
   fi
 done
 
-# Health check (mirrors Dockerfile HEALTHCHECK logic)
 for _c in "$SRV" "$CL"; do
-  # shellcheck disable=SC2016
-  if docker exec "$_c" sh -c '
-    iface="${WG_IFACE:-wg0}"
-    wg show "$iface" >/dev/null 2>&1 || exit 1
-    [ "$WG_ROLE" != "client" ] && exit 0
-    hs=$(wg show "$iface" latest-handshakes 2>/dev/null | awk "NR==1{print \$2}")
-    [ -n "$hs" ] && [ "$hs" != "0" ] && [ "$(( $(date +%s) - hs ))" -le 185 ]
-  ' >/dev/null 2>&1; then
-    ok "basic: $_c HEALTHCHECK passes"
-  else
-    fail "basic: $_c HEALTHCHECK failed"
-  fi
+  assert_healthy "$_c" "basic: $_c HEALTHCHECK passes"
 done
 
 scenario_cleanup
@@ -279,18 +286,7 @@ for _c in "$SRV" "$CL1" "$CL2"; do
 done
 
 for _c in "$SRV" "$CL1" "$CL2"; do
-  # shellcheck disable=SC2016
-  if docker exec "$_c" sh -c '
-    iface="${WG_IFACE:-wg0}"
-    wg show "$iface" >/dev/null 2>&1 || exit 1
-    [ "$WG_ROLE" != "client" ] && exit 0
-    hs=$(wg show "$iface" latest-handshakes 2>/dev/null | awk "NR==1{print \$2}")
-    [ -n "$hs" ] && [ "$hs" != "0" ] && [ "$(( $(date +%s) - hs ))" -le 185 ]
-  ' >/dev/null 2>&1; then
-    ok "multi-client: $_c HEALTHCHECK passes"
-  else
-    fail "multi-client: $_c HEALTHCHECK failed"
-  fi
+  assert_healthy "$_c" "multi-client: $_c HEALTHCHECK passes"
 done
 
 scenario_cleanup
@@ -386,6 +382,85 @@ else
   fi
 fi
 
+scenario_cleanup
+
+# --- Test: genpsk and showqr subcommands ---
+echo ""
+echo "################################################################"
+echo "# genpsk / showqr subcommands"
+echo "################################################################"
+_psk=$(docker run --rm "$IMAGE" genpsk)
+if printf '%s' "$_psk" | grep -qE "^[A-Za-z0-9+/]{43}=$"; then
+  ok "genpsk outputs a 44-character base64 key"
+else
+  fail "genpsk: unexpected output '$_psk'"
+fi
+
+_qk=$(genkeys); _qpriv="${_qk% *}"
+_srv=$(genkeys); _srvpub="${_srv#* }"
+if _qr=$(docker run --rm -e WG_ROLE=client -e "WG_PRIVATE_KEY=$_qpriv" \
+           -e "WG_SERVER_PUBKEY=$_srvpub" -e WG_SERVER_ENDPOINT=vpn.example.com:51820 \
+           "$IMAGE" showqr 2>&1); then
+  if printf '%s' "$_qr" | grep -q '█'; then
+    ok "showqr renders a QR code"
+  else
+    fail "showqr produced no QR output"
+  fi
+else
+  fail "showqr exited non-zero: $_qr"
+fi
+
+if docker run --rm -e WG_ROLE=server -e "WG_PRIVATE_KEY=$_qpriv" "$IMAGE" showqr >/dev/null 2>&1; then
+  fail "showqr should refuse WG_ROLE=server"
+else
+  ok "showqr refuses WG_ROLE=server"
+fi
+
+if docker run --rm "$IMAGE" bogus-subcommand >/dev/null 2>&1; then
+  fail "unknown subcommand should fail"
+else
+  ok "unknown subcommand fails"
+fi
+
+# --- Test: graceful shutdown ---
+# A client sits in the handshake wait loop for 15s after start; a SIGTERM there
+# used to tear the tunnel down and then hang until Docker sent SIGKILL.
+echo ""
+echo "################################################################"
+echo "# Graceful shutdown during the client handshake window"
+echo "################################################################"
+scenario_start "wg-stop-$RUN"
+STOPC="wg-stop-client-$RUN"
+docker run -d --name "$STOPC" \
+  --network "wg-stop-$RUN" \
+  --cap-add NET_ADMIN \
+  -e WG_ROLE=client \
+  -e "WG_PRIVATE_KEY=$_qpriv" \
+  -e "WG_SERVER_PUBKEY=$_srvpub" \
+  -e WG_SERVER_ENDPOINT=192.0.2.1:51820 \
+  "$IMAGE" >/dev/null
+scenario_add "$STOPC"
+sleep 2
+_t0=$(date +%s)
+docker stop -t 10 "$STOPC" >/dev/null 2>&1 || true
+_elapsed=$(( $(date +%s) - _t0 ))
+_code=$(docker inspect -f '{{.State.ExitCode}}' "$STOPC" 2>/dev/null || echo "?")
+if [ "$_elapsed" -lt 8 ]; then
+  ok "shutdown: container exits promptly (${_elapsed}s)"
+else
+  fail "shutdown: container needed ${_elapsed}s, i.e. it was SIGKILLed"
+fi
+if [ "$_code" != "137" ]; then
+  ok "shutdown: exit code $_code (not SIGKILL)"
+else
+  fail "shutdown: exit code 137 means Docker had to kill it"
+fi
+_shutdowns=$(docker logs "$STOPC" 2>&1 | grep -c "Shutting down" || true)
+if [ "$_shutdowns" = "1" ]; then
+  ok "shutdown: cleanup runs exactly once"
+else
+  fail "shutdown: cleanup ran $_shutdowns times"
+fi
 scenario_cleanup
 
 echo ""

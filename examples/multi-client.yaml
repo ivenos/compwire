@@ -1,19 +1,27 @@
 # Server + two clients (client2 with PSK). FORWARD rules enable client-to-client routing.
 # Generate keys: docker run --rm ivenos/compwire:latest genkey
-# Generate PSK:  openssl rand -base64 32
-# .env: WG_SERVER_PRIV/PUB, WG_CLIENT1_PRIV/PUB, WG_CLIENT2_PRIV/PUB, WG_PSK
-# Usage: docker compose -f examples/multi-client.yaml up
+# Generate PSK:  docker run --rm ivenos/compwire:latest genpsk
+# .env: WG_SERVER_PRIV/PUB, WG_CLIENT1_PRIV/PUB, WG_CLIENT2_PRIV/PUB, WG_PSK, WG_SERVER_HOST
+# Usage: docker compose --env-file .env -f examples/multi-client.yaml up
+#        (without --env-file, Compose looks for .env next to this file)
+#
+# Client-to-client traffic also needs IP forwarding on the host:
+#   sysctl -w net.ipv4.ip_forward=1
 
 services:
   server:
     image: ${COMPWIRE_IMAGE:-ivenos/compwire:latest}
     network_mode: host
+    cap_drop: [ALL]
     cap_add: [NET_ADMIN]
+    security_opt: [no-new-privileges:true]
     environment:
       WG_ROLE: server
       WG_PRIVATE_KEY: ${WG_SERVER_PRIV}
-      WG_POST_UP: "iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT"
-      WG_POST_DOWN: "iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT"
+      WG_ADDRESS: 10.77.0.1/24
+      # %i expands to the interface name, so these keep working if WG_IFACE changes.
+      WG_POST_UP: "iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEPT"
+      WG_POST_DOWN: "iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT"
       WG_PEER_CLIENT1_PUBKEY: ${WG_CLIENT1_PUB}
       WG_PEER_CLIENT1_ALLOWED_IPS: 10.77.0.2/32
       WG_PEER_CLIENT2_PUBKEY: ${WG_CLIENT2_PUB}
@@ -24,7 +32,9 @@ services:
   client1:
     image: ${COMPWIRE_IMAGE:-ivenos/compwire:latest}
     network_mode: host
+    cap_drop: [ALL]
     cap_add: [NET_ADMIN]
+    security_opt: [no-new-privileges:true]
     depends_on:
       server:
         condition: service_healthy
@@ -32,6 +42,10 @@ services:
       WG_ROLE: client
       WG_IFACE: wg1
       WG_PRIVATE_KEY: ${WG_CLIENT1_PRIV}
+      # Each client needs its own address, matching its WG_PEER_*_ALLOWED_IPS on
+      # the server. Without it both clients default to 10.77.0.2/24 and the
+      # server silently drops everything from the second one.
+      WG_ADDRESS: 10.77.0.2/32
       WG_SERVER_PUBKEY: ${WG_SERVER_PUB}
       WG_SERVER_ENDPOINT: ${WG_SERVER_HOST:-127.0.0.1}:51820
       WG_ALLOWED_IPS: 10.77.0.0/24
@@ -40,7 +54,9 @@ services:
   client2:
     image: ${COMPWIRE_IMAGE:-ivenos/compwire:latest}
     network_mode: host
+    cap_drop: [ALL]
     cap_add: [NET_ADMIN]
+    security_opt: [no-new-privileges:true]
     depends_on:
       server:
         condition: service_healthy
@@ -48,6 +64,7 @@ services:
       WG_ROLE: client
       WG_IFACE: wg2
       WG_PRIVATE_KEY: ${WG_CLIENT2_PRIV}
+      WG_ADDRESS: 10.77.0.3/32
       WG_SERVER_PUBKEY: ${WG_SERVER_PUB}
       WG_SERVER_ENDPOINT: ${WG_SERVER_HOST:-127.0.0.1}:51820
       WG_ALLOWED_IPS: 10.77.0.0/24

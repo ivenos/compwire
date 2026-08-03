@@ -18,6 +18,8 @@ Requires the `NET_ADMIN` capability and a Linux kernel ≥ 5.6 (WireGuard built-
    docker run --rm ivenos/compwire genkey
    ```
 
+   For a pre-shared key, use `genpsk` instead.
+
 2. Copy [`compose.yml`](compose.yml) and fill in all `<...>` placeholders with your keys.
 
 3. Start:
@@ -27,7 +29,9 @@ Requires the `NET_ADMIN` capability and a Linux kernel ≥ 5.6 (WireGuard built-
    docker compose logs -f
    ```
 
-The `compose.yml` runs one server and one client on the same host. In production each node runs on its own machine with `WG_SERVER_ENDPOINT` pointing to the server's public IP or hostname. See [`examples/`](examples/) for multi-client, full-tunnel, and IPv6 setups.
+The `compose.yml` runs one server and one client on the same host. In production each node runs on its own machine with `WG_SERVER_ENDPOINT` pointing to the server's public IP or hostname. See [`examples/`](examples/) for multi-client, full-tunnel, IPv6, and Docker-secrets setups.
+
+Set `WG_ADDRESS` on every client to the address the server lists for it in `WG_PEER_<ID>_ALLOWED_IPS`. If the two disagree, the handshake still succeeds and the healthcheck still reports healthy, but the server drops every packet from that peer.
 
 ---
 
@@ -129,7 +133,10 @@ docker exec <client-container> /entrypoint.sh showqr
 - Hook commands (`PRE_UP`, `POST_UP`, `PRE_DOWN`, `POST_DOWN`) run as root inside the container. Use `%i` as a placeholder for the interface name (substituted by wg-quick).
 - The server healthcheck verifies the interface is up. The client healthcheck additionally checks for a recent peer handshake (≤ 185 s).
 - The container logs the initial peer connection state after 30 s and any subsequent changes (full connectivity, partial, or disconnected).
+- **Secrets:** a value passed as an environment variable stays readable in `docker inspect` and `/proc/<pid>/environ` for the container's whole lifetime. The `*_FILE` variants avoid that, see [`examples/secrets.yaml`](examples/secrets.yaml).
 - **IP forwarding** is a host kernel setting, not a container setting. If the server routes traffic between peers (full tunnel with `WG_ALLOWED_IPS=0.0.0.0/0`, or client-to-client as in the multi-client example), enable it on the host: `sysctl -w net.ipv4.ip_forward=1` (persist via `/etc/sysctl.conf` or `/etc/sysctl.d/`). The iptables `FORWARD` rules in the examples are not sufficient on their own.
+- **Full tunnel** clients need one more host setting: `sysctl -w net.ipv4.conf.all.src_valid_mark=1`. For a `0.0.0.0/0` route wg-quick sets this itself, but `/proc/sys` is read-only inside a container, so the write fails and takes wg-quick down with it. Set on the host, wg-quick skips it.
+- With `network_mode: host` the WireGuard interface lives in the host's network namespace and outlives a container that was killed rather than stopped. On start compwire reclaims such an interface if it carries its own public key, and refuses to start if the interface belongs to anything else.
 - With `network_mode: host`, all services in the same Compose file share the host network stack and therefore need distinct `WG_IFACE` values (e.g. `wg0`, `wg1`, `wg2`). Clients don't bind a fixed port unless `WG_PORT` is set; multiple servers additionally need distinct `WG_PORT` values. In production each node runs on its own host, so this does not apply.
 
 ---

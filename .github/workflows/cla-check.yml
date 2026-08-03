@@ -10,8 +10,11 @@ permissions: {}
 jobs:
   cla:
     runs-on: ubuntu-latest
-    # Repo owner is implicitly covered; skips Renovate PRs (they run under this account).
-    if: github.event.pull_request.user.login != 'ivenos'
+    # Repo owner is implicitly covered. Bots are skipped by account type, so this
+    # keeps working if Renovate ever moves to the hosted app (renovate[bot]).
+    if: >-
+      github.event.pull_request.user.login != 'ivenos' &&
+      github.event.pull_request.user.type != 'Bot'
     steps:
       - name: Verify CLA checkbox is ticked
         env:

@@ -1,16 +1,20 @@
 # Server + single IPv4 client - minimal configuration.
 # Generate keys: docker run --rm ivenos/compwire:latest genkey  (once per role)
-# .env: WG_SERVER_PRIV, WG_SERVER_PUB, WG_CLIENT_PRIV, WG_CLIENT_PUB
-# Usage: docker compose -f examples/basic.yaml up
+# .env: WG_SERVER_PRIV, WG_SERVER_PUB, WG_CLIENT_PRIV, WG_CLIENT_PUB, WG_SERVER_HOST
+# Usage: docker compose --env-file .env -f examples/basic.yaml up
+#        (without --env-file, Compose looks for .env next to this file)
 
 services:
   server:
     image: ${COMPWIRE_IMAGE:-ivenos/compwire:latest}
     network_mode: host
+    cap_drop: [ALL]
     cap_add: [NET_ADMIN]
+    security_opt: [no-new-privileges:true]
     environment:
       WG_ROLE: server
       WG_PRIVATE_KEY: ${WG_SERVER_PRIV}
+      WG_ADDRESS: 10.77.0.1/24
       WG_PEER_CLIENT_PUBKEY: ${WG_CLIENT_PUB}
       WG_PEER_CLIENT_ALLOWED_IPS: 10.77.0.2/32
     restart: unless-stopped
@@ -18,7 +22,9 @@ services:
   client:
     image: ${COMPWIRE_IMAGE:-ivenos/compwire:latest}
     network_mode: host
+    cap_drop: [ALL]
     cap_add: [NET_ADMIN]
+    security_opt: [no-new-privileges:true]
     depends_on:
       server:
         condition: service_healthy
@@ -26,6 +32,9 @@ services:
       WG_ROLE: client
       WG_IFACE: wg1
       WG_PRIVATE_KEY: ${WG_CLIENT_PRIV}
+      # Must match the server's WG_PEER_CLIENT_ALLOWED_IPS, or the server drops
+      # every packet from this client while the handshake still succeeds.
+      WG_ADDRESS: 10.77.0.2/32
       WG_SERVER_PUBKEY: ${WG_SERVER_PUB}
       WG_SERVER_ENDPOINT: ${WG_SERVER_HOST:-127.0.0.1}:51820
     restart: unless-stopped

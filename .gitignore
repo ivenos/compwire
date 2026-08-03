@@ -1,0 +1,8 @@
+# The examples tell you to put private keys here.
+.env
+.env.*
+secrets/
+*.key
+*.psk
+
+.claude/
