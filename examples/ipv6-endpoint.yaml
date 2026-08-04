@@ -1,6 +1,7 @@
 # Client → server via IPv6 transport (tunnel still carries IPv4).
 # IPv6 endpoints need bracket notation: [address]:port
 # .env: WG_SERVER_PRIV/PUB, WG_CLIENT_PRIV/PUB, WG_SERVER_IPV6
+#       COMPWIRE_IMAGE overrides the image, e.g. for a locally built one.
 # Usage: docker compose --env-file .env -f examples/ipv6-endpoint.yaml up
 #        (without --env-file, Compose looks for .env next to this file)
 

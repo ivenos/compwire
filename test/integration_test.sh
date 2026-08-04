@@ -47,9 +47,9 @@ scenario_cleanup() {
 }
 
 scenario_start() {
-  _NET="$1"
+  _NET="$1"; shift
   _CONTAINERS=""
-  docker network create "$_NET" >/dev/null
+  docker network create "$@" "$_NET" >/dev/null
 }
 
 scenario_add() {
@@ -57,14 +57,20 @@ scenario_add() {
 }
 
 # Under set -e any failing docker command aborts mid-scenario, so cleanup cannot
-# rely on being reached in order.
-trap scenario_cleanup EXIT INT TERM
+# rely on being reached in order. A returning signal handler would resume the run
+# against containers it just deleted, so that path exits by itself.
+trap scenario_cleanup EXIT
+trap 'scenario_cleanup; exit 130' INT
+trap 'scenario_cleanup; exit 143' TERM
 
 # Poll the container's own HEALTHCHECK rather than re-implementing it here.
 assert_healthy() {
   _c="$1" _label="$2" _waited=0
   while [ "$_waited" -lt 90 ]; do
-    _status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$_c" 2>/dev/null || echo missing)"
+    # docker inspect prints an empty line and fails for a container that is gone,
+    # so the fallback has to replace the output rather than append to it.
+    _status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$_c" 2>/dev/null)" || _status=missing
+    [ -n "$_status" ] || _status=missing
     case "$_status" in
       healthy)          ok "$_label (docker health: healthy)"; return 0 ;;
       none|missing)     fail "$_label -- no healthcheck reported by docker"; return 0 ;;
@@ -73,6 +79,17 @@ assert_healthy() {
     _waited=$(( _waited + 3 ))
   done
   fail "$_label -- still '$_status' after ${_waited}s"
+}
+
+assert_running() {
+  _c="$1" _label="$2"
+  _state="$(docker inspect -f '{{.State.Status}}' "$_c" 2>/dev/null)" || _state=missing
+  if [ "$_state" = "running" ]; then
+    ok "$_label"
+  else
+    fail "$_label -- container is '$_state'"
+    docker logs "$_c" 2>&1 | tail -15 || true
+  fi
 }
 
 # --- Build image if missing ---
@@ -299,7 +316,12 @@ echo "################################################################"
 
 RUN="$$6"
 SRV="wg-v6-srv-$RUN"; CL="wg-v6-cl-$RUN"
-scenario_start "wg-v6-$RUN"
+# A plain bridge has no IPv6 address at all, which drops this scenario into the
+# config-only branch below - the one thing the unit tests already cover.
+if ! scenario_start "wg-v6-$RUN" --ipv6 --subnet fd00:c0de:1::/64; then
+  log "Daemon rejected an IPv6 network; falling back to IPv4-only."
+  scenario_start "wg-v6-$RUN"
+fi
 
 _s=$(genkeys); SRV_PRIV="${_s% *}"; SRV_PUB="${_s#* }"
 _c=$(genkeys); CL_PRIV="${_c% *}";  CL_PUB="${_c#* }"
@@ -429,6 +451,7 @@ echo ""
 echo "################################################################"
 echo "# Graceful shutdown during the client handshake window"
 echo "################################################################"
+RUN="$$s"
 scenario_start "wg-stop-$RUN"
 STOPC="wg-stop-client-$RUN"
 docker run -d --name "$STOPC" \
@@ -441,6 +464,9 @@ docker run -d --name "$STOPC" \
   "$IMAGE" >/dev/null
 scenario_add "$STOPC"
 sleep 2
+# A container that died on its own would pass the timing and exit-code checks
+# below without ever exercising the signal path.
+assert_running "$STOPC" "shutdown: client is up before the signal"
 _t0=$(date +%s)
 docker stop -t 10 "$STOPC" >/dev/null 2>&1 || true
 _elapsed=$(( $(date +%s) - _t0 ))
@@ -461,6 +487,44 @@ if [ "$_shutdowns" = "1" ]; then
 else
   fail "shutdown: cleanup ran $_shutdowns times"
 fi
+scenario_cleanup
+
+# --- Scenario: WG_DNS ---
+# wg-quick applies DNS through resolvconf, which refuses to touch the
+# resolv.conf Docker mounts unless the entrypoint marks it first.
+echo ""
+echo "################################################################"
+echo "# Scenario: WG_DNS  (examples/full-tunnel.yaml)"
+echo "################################################################"
+
+RUN="$$d"
+SRV="wg-dns-srv-$RUN"
+scenario_start "wg-dns-$RUN"
+
+_s=$(genkeys); SRV_PRIV="${_s% *}"
+_c=$(genkeys); CL_PUB="${_c#* }"
+
+docker run -d --name "$SRV" \
+  --network "wg-dns-$RUN" \
+  --cap-add NET_ADMIN \
+  -e WG_ROLE=server \
+  -e "WG_PRIVATE_KEY=$SRV_PRIV" \
+  -e WG_DNS=1.1.1.1 \
+  -e "WG_PEER_CLIENT_PUBKEY=$CL_PUB" \
+  -e WG_PEER_CLIENT_ALLOWED_IPS=10.77.0.2/32 \
+  "$IMAGE" >/dev/null
+scenario_add "$SRV"
+sleep 5
+
+assert_running "$SRV" "WG_DNS: server stays up"
+assert_healthy "$SRV" "WG_DNS: server HEALTHCHECK passes"
+if docker exec "$SRV" grep -q "nameserver 1.1.1.1" /etc/resolv.conf 2>/dev/null; then
+  ok "WG_DNS: resolvconf applied the tunnel nameserver"
+else
+  fail "WG_DNS: 1.1.1.1 missing from /etc/resolv.conf"
+  docker exec "$SRV" cat /etc/resolv.conf 2>&1 | head -5 || true
+fi
+
 scenario_cleanup
 
 echo ""

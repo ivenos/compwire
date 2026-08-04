@@ -33,14 +33,27 @@ fi
 # Validate an unsigned integer in [min,max]. The length check comes first because
 # busybox test errors out on values beyond 64 bits instead of comparing them,
 # and that error would otherwise pass for "in range".
+# Own variable prefix: sh has no locals, and the callers keep using their _label.
 validate_uint() {
-  _label="$1" _val="$2" _min="$3" _max="$4" _ctx="${5:-$2}"
-  case "$_val" in
-    ''|*[!0-9]*) die "$_label must be a number (got: '$_ctx')." ;;
+  _ui_label="$1" _ui_val="$2" _ui_min="$3" _ui_max="$4" _ui_ctx="${5:-$2}"
+  case "$_ui_val" in
+    ''|*[!0-9]*) die "$_ui_label must be a number (got: '$_ui_ctx')." ;;
   esac
-  if [ "${#_val}" -gt "${#_max}" ] || [ "$_val" -lt "$_min" ] || [ "$_val" -gt "$_max" ]; then
-    die "$_label must be ${_min}-${_max} (got: '$_ctx')."
+  if [ "${#_ui_val}" -gt "${#_ui_max}" ] || [ "$_ui_val" -lt "$_ui_min" ] || [ "$_ui_val" -gt "$_ui_max" ]; then
+    die "$_ui_label must be ${_ui_min}-${_ui_max} (got: '$_ui_ctx')."
   fi
+}
+
+# Strip leading and trailing spaces. The result lands in _trimmed.
+trim_spaces() {
+  _trimmed="$1"
+  while :; do
+    case "$_trimmed" in
+      ' '*) _trimmed="${_trimmed# }" ;;
+      *' ') _trimmed="${_trimmed% }" ;;
+      *)    break ;;
+    esac
+  done
 }
 
 # Validate a single IPv4 or IPv6 CIDR.
@@ -106,18 +119,17 @@ validate_cidr() {
 validate_cidr_list() {
   _label="$1" _list="$2"
   validate_no_newline "$_label" "$_list"
+  # A trailing comma produces no empty field when the shell splits the list, so
+  # it would reach the config unnoticed and only fail in wg-quick.
+  case "$_list" in
+    ,*|*,) die "$_label must not start or end with a comma (got: '$_list')." ;;
+  esac
   _oIFS="$IFS"; IFS=','
   # shellcheck disable=SC2086
   for _entry in $_list; do
     # "10.0.0.1/24,  10.0.0.2/24" is a natural way to write a list, so strip any
     # amount of padding rather than a single space.
-    while :; do
-      case "$_entry" in
-        ' '*) _entry="${_entry# }" ;;
-        *' ') _entry="${_entry% }" ;;
-        *)    break ;;
-      esac
-    done
+    trim_spaces "$_entry"; _entry="$_trimmed"
     [ -z "$_entry" ] && die "$_label contains an empty entry in '$_list'."
     validate_cidr "$_label" "$_entry"
   done
@@ -185,8 +197,12 @@ validate_endpoint() {
   case "$_ep" in
     \[*\]:*)
       _host="${_ep#[}"; _host="${_host%%]:*}"
-      _port="${_ep##*:}"
+      # Not ##*: - that would take "[fd00::1]:51820:99" for port 99.
+      _port="${_ep#*]:}"
       [ -z "$_host" ] && die "$_label has empty host (got: '$_ep')."
+      case "$_host" in
+        *[!0-9a-fA-F:]*) die "$_label has an invalid IPv6 address in brackets (got: '$_ep')." ;;
+      esac
       ;;
     *:*)
       _rest="${_ep#*:}"
@@ -196,6 +212,9 @@ validate_endpoint() {
       _host="${_ep%%:*}"
       _port="${_ep##*:}"
       [ -z "$_host" ] && die "$_label has empty host (got: '$_ep')."
+      case "$_host" in
+        *[!A-Za-z0-9._-]*) die "$_label has an invalid host (got: '$_ep')." ;;
+      esac
       ;;
     *)
       die "$_label must be in host:port format (got: '$_ep')."
@@ -213,6 +232,9 @@ case "$WG_ROLE" in
 esac
 
 # Resolve WG_PRIVATE_KEY from file if needed
+if [ -n "${WG_PRIVATE_KEY:-}" ] && [ -n "${WG_PRIVATE_KEY_FILE:-}" ]; then
+  warn "WG_PRIVATE_KEY and WG_PRIVATE_KEY_FILE are both set; WG_PRIVATE_KEY_FILE is ignored."
+fi
 if [ -z "${WG_PRIVATE_KEY:-}" ] && [ -n "${WG_PRIVATE_KEY_FILE:-}" ]; then
   [ -f "$WG_PRIVATE_KEY_FILE" ] || die "WG_PRIVATE_KEY_FILE points to non-existent file: '$WG_PRIVATE_KEY_FILE'."
   WG_PRIVATE_KEY="$(tr -d '[:space:]' < "$WG_PRIVATE_KEY_FILE")"
@@ -262,6 +284,7 @@ if [ "$WG_ROLE" = "server" ]; then
   WG_ADDRESS="${WG_ADDRESS:-10.77.0.1/24}"
   if [ -n "${WG_PSK:-}${WG_PSK_FILE:-}" ]; then
     warn "WG_PSK/WG_PSK_FILE is ignored for WG_ROLE=server. Use WG_PEER_<ID>_PSK per peer."
+    unset WG_PSK WG_PSK_FILE
   fi
 else
   WG_ADDRESS="${WG_ADDRESS:-10.77.0.2/24}"
@@ -278,6 +301,9 @@ else
   validate_keepalive "WG_KEEPALIVE" "$WG_KEEPALIVE"
   validate_cidr_list "WG_ALLOWED_IPS" "$WG_ALLOWED_IPS"
 
+  if [ -n "${WG_PSK:-}" ] && [ -n "${WG_PSK_FILE:-}" ]; then
+    warn "WG_PSK and WG_PSK_FILE are both set; WG_PSK_FILE is ignored."
+  fi
   if [ -z "${WG_PSK:-}" ] && [ -n "${WG_PSK_FILE:-}" ]; then
     [ -f "$WG_PSK_FILE" ] || die "WG_PSK_FILE points to non-existent file: '$WG_PSK_FILE'."
     WG_PSK="$(tr -d '[:space:]' < "$WG_PSK_FILE")"
@@ -326,6 +352,12 @@ if [ "$WG_ROLE" = "server" ]; then
   peer_ids=""
   for _var in $(env | sed -n 's/^\(WG_PEER_[^=]*\)=.*/\1/p' | sort); do
     _rest="${_var#WG_PEER_}"
+    # Without a separator there is no ID, and "${_rest#*_}" would hand back the
+    # whole name - WG_PEER_PSK would be read as the peer "PSK".
+    case "$_rest" in
+      *_*) ;;
+      *) die "Unknown peer variable '${_var}'. Expected WG_PEER_<ID>_<ATTR> with ATTR one of: ${PEER_ATTRS}." ;;
+    esac
     _id="${_rest%%_*}"
     _attr="${_rest#*_}"
     case " $PEER_ATTRS " in
@@ -346,6 +378,8 @@ if [ "$WG_ROLE" = "server" ]; then
   [ -z "$peer_ids" ] && warn "No peers configured (no WG_PEER_<ID>_PUBKEY vars found). Server will accept no connections."
 
   peer_count=0
+  seen_pubkeys=""
+  seen_networks=""
   for id in $peer_ids; do
     peer_pubkey="$(printenv "WG_PEER_${id}_PUBKEY" || true)"
     peer_allowed="$(printenv "WG_PEER_${id}_ALLOWED_IPS" || true)"
@@ -358,6 +392,25 @@ if [ "$WG_ROLE" = "server" ]; then
     validate_wg_key "WG_PEER_${id}_PUBKEY" "$peer_pubkey"
     [ -z "$peer_allowed" ] && die "WG_PEER_${id}_ALLOWED_IPS is not set."
     validate_cidr_list "WG_PEER_${id}_ALLOWED_IPS" "$peer_allowed"
+
+    # wg merges peers that share a key and hands a repeated prefix to the last
+    # peer that claims it, leaving the other one unable to send. Both look like a
+    # working two-peer setup in the log.
+    case " $seen_pubkeys " in
+      *" $peer_pubkey "*) die "WG_PEER_${id}_PUBKEY is already used by another peer. Every peer needs its own key pair." ;;
+    esac
+    seen_pubkeys="${seen_pubkeys} ${peer_pubkey}"
+
+    _pIFS="$IFS"; IFS=','
+    # shellcheck disable=SC2086
+    for _net in $peer_allowed; do
+      trim_spaces "$_net"; _net="$_trimmed"
+      case " $seen_networks " in
+        *" $_net "*) IFS="$_pIFS"; die "WG_PEER_${id}_ALLOWED_IPS entry '${_net}' is already assigned to another peer." ;;
+      esac
+      seen_networks="${seen_networks} ${_net}"
+    done
+    IFS="$_pIFS"
 
     if [ -z "$peer_psk" ] && [ -n "$peer_psk_file" ]; then
       [ -f "$peer_psk_file" ] || die "WG_PEER_${id}_PSK_FILE points to non-existent file: '$peer_psk_file'."
@@ -380,7 +433,10 @@ if [ "$WG_ROLE" = "server" ]; then
       [ -n "$peer_endpoint"  ] && printf '%-20s= %s\n' "Endpoint"            "$peer_endpoint"
       [ -n "$peer_keepalive" ] && printf '%-20s= %s\n' "PersistentKeepalive" "$peer_keepalive"
     } >> "$CFG"
+    # Same reason as the WG_PRIVATE_KEY unset above: keep it out of the
+    # environment wg-quick and the hooks inherit.
     unset peer_psk peer_psk_file
+    unset "WG_PEER_${id}_PSK" "WG_PEER_${id}_PSK_FILE" 2>/dev/null || true
 
     peer_count=$(( peer_count + 1 ))
   done
@@ -441,8 +497,20 @@ fi
 trap on_signal INT TERM
 trap cleanup EXIT
 
+# openresolv refuses to touch a resolv.conf without its own marker, and Docker
+# writes one of its own into every container. Without the marker wg-quick's
+# `resolvconf -a` fails and takes the interface straight back down.
+if [ -n "$WG_DNS" ] && ! head -n 1 /etc/resolv.conf 2>/dev/null | grep -q '^# Generated by resolvconf$'; then
+  _resolv="$(cat /etc/resolv.conf 2>/dev/null || true)"
+  printf '# Generated by resolvconf\n%s\n' "$_resolv" > /etc/resolv.conf ||
+    die "WG_DNS is set, but /etc/resolv.conf is not writable, so wg-quick cannot apply it."
+fi
+
 log "Starting WireGuard (${WG_ROLE}) on ${WG_ADDRESS}..."
-wg-quick up "$WG_IFACE"
+# wg-quick prints its own diagnostics but exits without a hint at what to do, and
+# under set -e the script would end on the shutdown message alone.
+wg-quick up "$WG_IFACE" ||
+  die "wg-quick could not bring up ${WG_IFACE} (see its output above). Common causes: the wireguard kernel module is not loaded on the host (modprobe wireguard), the container lacks NET_ADMIN, or a hook command failed."
 
 wg show "$WG_IFACE" >/dev/null 2>&1 || die "WireGuard interface ${WG_IFACE} failed to start."
 log "Interface ${WG_IFACE} is up (port $(wg show "$WG_IFACE" listen-port))."

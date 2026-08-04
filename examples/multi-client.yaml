@@ -2,8 +2,14 @@
 # Generate keys: docker run --rm ivenos/compwire:latest genkey
 # Generate PSK:  docker run --rm ivenos/compwire:latest genpsk
 # .env: WG_SERVER_PRIV/PUB, WG_CLIENT1_PRIV/PUB, WG_CLIENT2_PRIV/PUB, WG_PSK, WG_SERVER_HOST
-# Usage: docker compose --env-file .env -f examples/multi-client.yaml up
+#       COMPWIRE_IMAGE overrides the image, e.g. for a locally built one.
+# Usage: one service per host, e.g. on the server
+#   docker compose --env-file .env -f examples/multi-client.yaml up server
 #        (without --env-file, Compose looks for .env next to this file)
+#
+# Unlike the other examples this one cannot run in full on a single host: with
+# network_mode: host both clients would install a route for the server address
+# 10.77.0.1 in the same namespace, and the second one loses to "File exists".
 #
 # Client-to-client traffic also needs IP forwarding on the host:
 #   sysctl -w net.ipv4.ip_forward=1

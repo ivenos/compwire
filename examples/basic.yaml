@@ -1,6 +1,7 @@
 # Server + single IPv4 client - minimal configuration.
 # Generate keys: docker run --rm ivenos/compwire:latest genkey  (once per role)
 # .env: WG_SERVER_PRIV, WG_SERVER_PUB, WG_CLIENT_PRIV, WG_CLIENT_PUB, WG_SERVER_HOST
+#       COMPWIRE_IMAGE overrides the image, e.g. for a locally built one.
 # Usage: docker compose --env-file .env -f examples/basic.yaml up
 #        (without --env-file, Compose looks for .env next to this file)
 

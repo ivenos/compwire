@@ -60,8 +60,8 @@ short imperative subject.
 
 ## Releases
 
-A `v*` tag builds the multi-arch image, publishes it to GHCR and Docker Hub and
-moves `latest`. Commits on `main` publish `dev`. The changelog lives in the
+A `v[0-9]*` tag builds the multi-arch image, publishes it to GHCR and Docker Hub
+and moves `latest`. Commits on `main` publish `dev`. The changelog lives in the
 GitHub release notes, in Keep a Changelog style
 (https://keepachangelog.com/en/1.1.0/). There is no CHANGELOG.md file.
 

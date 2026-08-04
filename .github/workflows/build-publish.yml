@@ -14,7 +14,9 @@ env:
   GITHUB_IMAGE: ghcr.io/ivenos/compwire
   DOCKERHUB_IMAGE: ivenos/compwire
 
-# One run per ref: PRs cancel superseded runs; pushes queue so publishes never interleave.
+# One run per ref: PRs cancel superseded runs, pushes to the same ref queue. A main
+# push and a tag push are different refs and do run at once, which is fine as long as
+# only one version tag is pushed at a time.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -26,6 +28,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -37,6 +40,7 @@ jobs:
 
   integration:
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     needs: test
     strategy:
       fail-fast: false
@@ -65,6 +69,7 @@ jobs:
       contents: read
       packages: write
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -128,6 +133,7 @@ jobs:
 
   push:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: build
     permissions:
       contents: read
@@ -176,10 +182,13 @@ jobs:
             type=semver,pattern={{major}}
 
       - name: Fail loudly if no tag was derived
+        # Via env, not interpolated: a ref name may contain shell metacharacters.
+        env:
+          REF: ${{ github.ref }}
         run: |
           count=$(jq -r '.tags | length' <<< "$DOCKER_METADATA_OUTPUT_JSON")
           if [ "$count" -eq 0 ]; then
-            echo "::error::No image tag derived for ${{ github.ref }} - refusing to leave untagged digests behind."
+            echo "::error::No image tag derived for $REF - refusing to leave untagged digests behind."
             exit 1
           fi
 
@@ -191,9 +200,18 @@ jobs:
             $(printf '${{ env.GITHUB_IMAGE }}@sha256:%s ' *)
 
       - name: Prepare Docker Hub README
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           printf '**Note:** This description is automatically generated from the [GitHub repository README](https://github.com/ivenos/compwire).\n\n---\n\n' \
             | cat - README.md > /tmp/dockerhub-readme.md
+          # Relative links resolve to nothing on Docker Hub. sed has no lookahead,
+          # so absolute links and anchors get marked, skipped, and unmarked again.
+          sed -i -E \
+            -e 's#\]\(http#](@@KEEP@@http#g' \
+            -e 's#\]\(\##](@@KEEP@@\##g' \
+            -e "s#\]\(([^)@][^)]*)\)#](https://github.com/ivenos/compwire/blob/${GITHUB_REF_NAME}/\1)#g" \
+            -e 's#@@KEEP@@##g' \
+            /tmp/dockerhub-readme.md
 
       - name: Create and push multi-arch manifest to Docker Hub
         working-directory: /tmp/digests
@@ -202,7 +220,9 @@ jobs:
             $(jq -cr '.tags | map(select(startswith("ghcr.io") | not)) | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf 'docker.io/${{ env.DOCKERHUB_IMAGE }}@sha256:%s ' *)
 
+      # Only on a release: the page describes what `latest` is, not what main has.
       - name: Update Docker Hub description
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: peter-evans/dockerhub-description@v5
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}

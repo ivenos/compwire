@@ -141,7 +141,7 @@ run_entrypoint() {
   done
   CONFIG_FILE="$WG_CONFIG_DIR/${_iface}.conf"
   PATCHED="$TMPDIR_TEST/entrypoint_patched.sh"
-  sed "s|/etc/wireguard|$WG_CONFIG_DIR|g" "$SCRIPT" > "$PATCHED"
+  sed "s|/etc/wireguard|$WG_CONFIG_DIR|g; s|/etc/resolv.conf|$TMPDIR_TEST/resolv.conf|g" "$SCRIPT" > "$PATCHED"
   sed -i '/sleep infinity/,/wait/c\exit 0' "$PATCHED"
   chmod +x "$PATCHED"
   env -i PATH="$PATH" "MOCK_IFACE_EXISTS=${MOCK_IFACE_EXISTS:-0}" "$@" \
@@ -153,7 +153,7 @@ run_subcommand() {
   _arg="$1"; shift
   CONFIG_FILE="$WG_CONFIG_DIR/wg0.conf"
   PATCHED="$TMPDIR_TEST/entrypoint_patched.sh"
-  sed "s|/etc/wireguard|$WG_CONFIG_DIR|g" "$SCRIPT" > "$PATCHED"
+  sed "s|/etc/wireguard|$WG_CONFIG_DIR|g; s|/etc/resolv.conf|$TMPDIR_TEST/resolv.conf|g" "$SCRIPT" > "$PATCHED"
   sed -i '/sleep infinity/,/wait/c\exit 0' "$PATCHED"
   env -i PATH="$PATH" "MOCK_IFACE_EXISTS=${MOCK_IFACE_EXISTS:-0}" "$@" \
     sh "$PATCHED" "$_arg" > "$TMPDIR_TEST/stdout.txt" 2>&1
@@ -387,7 +387,7 @@ if run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" WG_IFACE=wg0/bad; then
 else
   ok "Invalid WG_IFACE fails correctly"
 fi
-if run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" WG_IFACE=wg0;evil; then
+if run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" "WG_IFACE=wg0;evil"; then
   fail "WG_IFACE with semicolon should fail"
 else
   ok "WG_IFACE with semicolon fails correctly"
@@ -966,6 +966,181 @@ echo "=== Test 63: WG_PSK on a server warns instead of being ignored ==="
 setup_mock_env
 run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" "WG_PSK=$K_PSK" || true
 assert_stdout_contains "Server-side WG_PSK is called out" "ignored for WG_ROLE=server"
+cleanup_mock_env
+
+echo ""
+echo "=== Test 64: A successful run exits 0 ==="
+# Every other positive test ignores the exit code, so nothing after the config
+# write is covered without this.
+setup_mock_env
+if run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" "WG_PEER_BERLIN_PUBKEY=$K_BERLIN" WG_PEER_BERLIN_ALLOWED_IPS=10.77.0.2/32; then
+  ok "Server startup path exits 0"
+else
+  fail "Server startup path exited non-zero"
+  cat "$TMPDIR_TEST/stdout.txt" || true
+fi
+cleanup_mock_env
+setup_mock_env
+if run_entrypoint WG_ROLE=client "WG_PRIVATE_KEY=$K_PRIV" "WG_SERVER_PUBKEY=$K_SRVPUB" \
+  WG_SERVER_ENDPOINT=1.2.3.4:51820; then
+  ok "Client startup path exits 0"
+else
+  fail "Client startup path exited non-zero"
+  cat "$TMPDIR_TEST/stdout.txt" || true
+fi
+assert_stdout_contains "Client reports the handshake" "tunnel is live"
+cleanup_mock_env
+
+echo ""
+echo "=== Test 65: Trailing comma in a CIDR list -> error ==="
+setup_mock_env
+if run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" "WG_ADDRESS=10.77.0.1/24,"; then
+  fail "Trailing comma should fail"
+else
+  ok "Trailing comma fails correctly"
+fi
+assert_stdout_contains "Trailing comma is named" "must not start or end with a comma"
+cleanup_mock_env
+
+echo ""
+echo "=== Test 66: Two peers sharing a key or a prefix -> error ==="
+setup_mock_env
+if run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" \
+  "WG_PEER_ALPHA_PUBKEY=$K_BERLIN" WG_PEER_ALPHA_ALLOWED_IPS=10.77.0.2/32 \
+  "WG_PEER_BRAVO_PUBKEY=$K_BERLIN" WG_PEER_BRAVO_ALLOWED_IPS=10.77.0.3/32; then
+  fail "Duplicate peer pubkey should fail"
+else
+  ok "Duplicate peer pubkey fails correctly"
+fi
+cleanup_mock_env
+setup_mock_env
+if run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" \
+  "WG_PEER_ALPHA_PUBKEY=$K_BERLIN" WG_PEER_ALPHA_ALLOWED_IPS=10.77.0.2/32 \
+  "WG_PEER_BRAVO_PUBKEY=$K_NUM" "WG_PEER_BRAVO_ALLOWED_IPS=10.77.0.3/32, 10.77.0.2/32"; then
+  fail "Duplicate AllowedIPs entry should fail"
+else
+  ok "Duplicate AllowedIPs entry fails correctly"
+fi
+assert_stdout_contains "Duplicate prefix is named" "already assigned to another peer"
+cleanup_mock_env
+setup_mock_env
+run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" \
+  "WG_PEER_ALPHA_PUBKEY=$K_BERLIN" WG_PEER_ALPHA_ALLOWED_IPS=10.77.0.2/32 \
+  "WG_PEER_BRAVO_PUBKEY=$K_NUM" WG_PEER_BRAVO_ALLOWED_IPS=10.77.0.3/32 || true
+assert_contains "Distinct peers are still accepted" "AllowedIPs          = 10.77.0.3/32" "$CONFIG_FILE"
+cleanup_mock_env
+
+echo ""
+echo "=== Test 67: WG_IFACE picks the config file name ==="
+setup_mock_env
+run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" WG_IFACE=wg1 || true
+assert_contains "Config written for wg1" "PrivateKey = $K_PRIV" "$CONFIG_FILE"
+if [ -f "$WG_CONFIG_DIR/wg0.conf" ]; then
+  fail "wg0.conf must not be written when WG_IFACE=wg1"
+else
+  ok "No wg0.conf when WG_IFACE=wg1"
+fi
+cleanup_mock_env
+
+echo ""
+echo "=== Test 68: Malformed keys and peer values -> error ==="
+setup_mock_env
+if run_entrypoint WG_ROLE=server WG_PRIVATE_KEY=not-a-key; then
+  fail "Malformed WG_PRIVATE_KEY should fail"
+else
+  ok "Malformed WG_PRIVATE_KEY fails correctly"
+fi
+cleanup_mock_env
+setup_mock_env
+if run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" \
+  WG_PEER_BERLIN_PUBKEY=AAAA WG_PEER_BERLIN_ALLOWED_IPS=10.77.0.2/32; then
+  fail "Malformed peer PUBKEY should fail"
+else
+  ok "Malformed peer PUBKEY fails correctly"
+fi
+cleanup_mock_env
+setup_mock_env
+if run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" \
+  "WG_PEER_BERLIN_PUBKEY=$K_BERLIN" WG_PEER_BERLIN_ALLOWED_IPS=10.77.0.2/32 \
+  WG_PEER_BERLIN_PSK=short; then
+  fail "Malformed peer PSK should fail"
+else
+  ok "Malformed peer PSK fails correctly"
+fi
+cleanup_mock_env
+setup_mock_env
+if run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" \
+  "WG_PEER_BERLIN_PUBKEY=$K_BERLIN" WG_PEER_BERLIN_ALLOWED_IPS=10.77.0.2/32 \
+  WG_PEER_BERLIN_KEEPALIVE=0; then
+  fail "Peer KEEPALIVE=0 should fail"
+else
+  ok "Peer KEEPALIVE=0 fails correctly"
+fi
+cleanup_mock_env
+
+echo ""
+echo "=== Test 69: Endpoint host is validated ==="
+setup_mock_env
+if run_entrypoint WG_ROLE=client "WG_PRIVATE_KEY=$K_PRIV" "WG_SERVER_PUBKEY=$K_SRVPUB" \
+  'WG_SERVER_ENDPOINT=vpn;touch /tmp/x:51820'; then
+  fail "Endpoint host with shell characters should fail"
+else
+  ok "Endpoint host with shell characters fails correctly"
+fi
+cleanup_mock_env
+setup_mock_env
+if run_entrypoint WG_ROLE=client "WG_PRIVATE_KEY=$K_PRIV" "WG_SERVER_PUBKEY=$K_SRVPUB" \
+  'WG_SERVER_ENDPOINT=[fd00::1]:51820:99'; then
+  fail "Bracket endpoint with a trailing port should fail"
+else
+  ok "Bracket endpoint with a trailing port fails correctly"
+fi
+cleanup_mock_env
+setup_mock_env
+run_entrypoint WG_ROLE=client "WG_PRIVATE_KEY=$K_PRIV" "WG_SERVER_PUBKEY=$K_SRVPUB" \
+  'WG_SERVER_ENDPOINT=[fd00::1]:51820' || true
+assert_contains "Bracketed IPv6 endpoint accepted" "Endpoint            = [fd00::1]:51820" "$CONFIG_FILE"
+cleanup_mock_env
+
+echo ""
+echo "=== Test 70: WG_PEER_* without an ID is reported as unknown ==="
+setup_mock_env
+if run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" "WG_PEER_PSK=$K_PSK"; then
+  fail "WG_PEER_PSK should fail"
+else
+  ok "WG_PEER_PSK fails correctly"
+fi
+assert_stdout_contains "WG_PEER_PSK is named as unknown" "Unknown peer variable 'WG_PEER_PSK'"
+cleanup_mock_env
+
+echo ""
+echo "=== Test 71: Validation messages name the variable once ==="
+setup_mock_env
+run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" "WG_ADDRESS=10.0.0.1/24,10.0.0.2/999" || true
+assert_stdout_contains "Prefix error is not doubled" "WG_ADDRESS prefix must be 0-32"
+cleanup_mock_env
+
+echo ""
+echo "=== Test 72: A key and its _FILE together warn ==="
+setup_mock_env
+printf '%s\n' "$K_PRIVFILE" > "$TMPDIR_TEST/priv.key"
+run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" "WG_PRIVATE_KEY_FILE=$TMPDIR_TEST/priv.key" || true
+assert_stdout_contains "Ignored key file is called out" "WG_PRIVATE_KEY_FILE is ignored"
+assert_contains "Environment key wins" "PrivateKey = $K_PRIV" "$CONFIG_FILE"
+cleanup_mock_env
+
+echo ""
+echo "=== Test 73: WG_DNS prepares resolv.conf for openresolv ==="
+setup_mock_env
+printf '# Generated by Docker Engine.\nnameserver 127.0.0.11\n' > "$TMPDIR_TEST/resolv.conf"
+run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" WG_DNS=1.1.1.1 || true
+assert_contains "resolvconf marker written" "# Generated by resolvconf" "$TMPDIR_TEST/resolv.conf"
+assert_contains "Existing nameserver kept"  "nameserver 127.0.0.11"     "$TMPDIR_TEST/resolv.conf"
+cleanup_mock_env
+setup_mock_env
+printf '# Generated by Docker Engine.\n' > "$TMPDIR_TEST/resolv.conf"
+run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" || true
+assert_not_contains "Untouched without WG_DNS" "# Generated by resolvconf" "$TMPDIR_TEST/resolv.conf"
 cleanup_mock_env
 
 echo ""
