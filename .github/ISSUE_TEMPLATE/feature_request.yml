@@ -14,7 +14,7 @@ body:
     id: proposal
     attributes:
       label: Proposed solution
-      description: How would you like it to work? Include compose.yaml or environment variable examples if applicable.
+      description: How would you like it to work? Include compose.yml or environment variable examples if applicable.
     validations:
       required: true
 

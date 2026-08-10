@@ -3,9 +3,8 @@ name: Build & Publish
 on:
   push:
     branches: [main]
-    # v[0-9]* rather than v*: a non-semver tag would build an image that the
-    # tag rules below cannot name.
-    tags: ["v[0-9]*"]
+    # Semver only: a tag the rules below cannot name pushes untagged digests.
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -14,9 +13,7 @@ env:
   GITHUB_IMAGE: ghcr.io/ivenos/compwire
   DOCKERHUB_IMAGE: ivenos/compwire
 
-# One run per ref: PRs cancel superseded runs, pushes to the same ref queue. A main
-# push and a tag push are different refs and do run at once, which is fine as long as
-# only one version tag is pushed at a time.
+# One run per ref: PRs cancel superseded runs, pushes to the same ref queue.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -30,13 +27,34 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # No job pushes with git, so GITHUB_TOKEN has no business in .git/config.
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Shellcheck
         run: shellcheck entrypoint.sh test/run_tests.sh test/integration_test.sh
 
       - name: Run tests
         run: sh test/run_tests.sh
+
+      - name: Check the compose files parse
+        # compose.yml is shipped, not just documentation, and nothing else reads these.
+        run: |
+          for f in compose.yml examples/*.yaml; do
+            echo "$f"
+            docker compose -f "$f" config -q
+          done
+
+      - name: Run tests under busybox ash
+        # The runner's sh is bash, the image's is busybox, and parts of the
+        # entrypoint exist because they disagree. Renovate bumps the base image in
+        # the Dockerfile and never reads a run: block, so it is taken from there.
+        run: |
+          base=$(awk '/^FROM /{print $2; exit}' Dockerfile)
+          echo "Base image: $base"
+          tar c entrypoint.sh Dockerfile test \
+            | docker run --rm -i "$base" sh -c 'mkdir /w && cd /w && tar x && sh test/run_tests.sh'
 
   integration:
     runs-on: ${{ matrix.runner }}
@@ -48,6 +66,8 @@ jobs:
         runner: [ubuntu-latest, ubuntu-24.04-arm]
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Build image
         run: docker build -t compwire:test .
@@ -57,10 +77,8 @@ jobs:
 
   build:
     needs: [test, integration]
-    # Only the upstream repo has the credentials, and only refs the tag rules in
-    # `push` can actually name are worth pushing digests for. A fork or a
-    # workflow_dispatch off a side branch would otherwise push untagged blobs
-    # and then fail at manifest creation.
+    # A fork or a dispatch off a side branch would push untagged blobs and then
+    # fail at manifest creation.
     if: >-
       github.repository == 'ivenos/compwire' &&
       github.event_name != 'pull_request' &&
@@ -69,7 +87,7 @@ jobs:
       contents: read
       packages: write
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -83,6 +101,39 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Docker meta
+        id: meta
+        # This job tags nothing, but the labels baked into the image derive from
+        # the same rules; without them image.version is the bare ref.
+        uses: docker/metadata-action@v6
+        with:
+          images: |
+            ${{ env.GITHUB_IMAGE }}
+            docker.io/${{ env.DOCKERHUB_IMAGE }}
+          flavor: latest=auto
+          tags: |
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/main' }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+          # GitHub reports BUSL-1.1 as NOASSERTION and that ends up in every image.
+          labels: |
+            org.opencontainers.image.licenses=BUSL-1.1
+
+      - name: Refuse to push digests that no tag will reference
+        # The trigger glob is wider than the semver rules, and the push job only
+        # notices once the blobs are in both registries.
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          count=$(jq -r '.tags | length' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          if [ "$count" -eq 0 ]; then
+            echo "::error::No image tag derived for $REF - refusing to push digests that would never be tagged."
+            exit 1
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -100,12 +151,6 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.GITHUB_IMAGE }}
-
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@v7
@@ -116,6 +161,15 @@ jobs:
           outputs: type=image,"name=${{ env.GITHUB_IMAGE }},docker.io/${{ env.DOCKERHUB_IMAGE }}",push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+
+      - name: Integration test the image that was pushed
+        # The job above tests the source tree, this tests the artifact: neither
+        # build pins the apk index. By digest and before any tag.
+        env:
+          REF: ${{ env.GITHUB_IMAGE }}@${{ steps.build.outputs.digest }}
+        run: |
+          docker pull "$REF"
+          sh test/integration_test.sh "$REF"
 
       - name: Export digest
         run: |
@@ -141,6 +195,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Download digests
         uses: actions/download-artifact@v8
@@ -148,6 +204,19 @@ jobs:
           path: /tmp/digests
           pattern: digests-*
           merge-multiple: true
+
+      - name: Check that every architecture arrived
+        working-directory: /tmp/digests
+        # imagetools create exits 0 for a single digest and republishes every tag,
+        # latest included, as a single-arch image.
+        env:
+          EXPECTED: 2
+        run: |
+          found=$(find . -type f | wc -l)
+          if [ "$found" -ne "$EXPECTED" ]; then
+            echo "::error::Expected $EXPECTED per-architecture digests, found $found - refusing to publish a partial manifest."
+            exit 1
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -172,8 +241,7 @@ jobs:
           images: |
             ${{ env.GITHUB_IMAGE }}
             docker.io/${{ env.DOCKERHUB_IMAGE }}
-          # latest=auto keeps `latest` on the newest release proper. A raw latest
-          # would also move it for prereleases like v2.0.0-rc1.
+          # latest=auto keeps `latest` off prereleases like v2.0.0-rc1.
           flavor: latest=auto
           tags: |
             type=raw,value=dev,enable=${{ github.ref == 'refs/heads/main' }}
@@ -199,20 +267,6 @@ jobs:
             $(jq -cr '.tags | map(select(startswith("ghcr.io"))) | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf '${{ env.GITHUB_IMAGE }}@sha256:%s ' *)
 
-      - name: Prepare Docker Hub README
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          printf '**Note:** This description is automatically generated from the [GitHub repository README](https://github.com/ivenos/compwire).\n\n---\n\n' \
-            | cat - README.md > /tmp/dockerhub-readme.md
-          # Relative links resolve to nothing on Docker Hub. sed has no lookahead,
-          # so absolute links and anchors get marked, skipped, and unmarked again.
-          sed -i -E \
-            -e 's#\]\(http#](@@KEEP@@http#g' \
-            -e 's#\]\(\##](@@KEEP@@\##g' \
-            -e "s#\]\(([^)@][^)]*)\)#](https://github.com/ivenos/compwire/blob/${GITHUB_REF_NAME}/\1)#g" \
-            -e 's#@@KEEP@@##g' \
-            /tmp/dockerhub-readme.md
-
       - name: Create and push multi-arch manifest to Docker Hub
         working-directory: /tmp/digests
         run: |
@@ -220,9 +274,36 @@ jobs:
             $(jq -cr '.tags | map(select(startswith("ghcr.io") | not)) | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf 'docker.io/${{ env.DOCKERHUB_IMAGE }}@sha256:%s ' *)
 
-      # Only on a release: the page describes what `latest` is, not what main has.
+  # Its own job, after both registries are tagged: in the push job a failure here
+  # left GHCR tagged and Docker Hub not, and `docker login` leaves credentials
+  # behind for the rest of that job. Only on a release, which the hyphen rules out.
+  dockerhub-readme:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: push
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Prepare Docker Hub README
+        run: |
+          printf '**Note:** This description is automatically generated from the [GitHub repository README](https://github.com/ivenos/compwire).\n\n---\n\n' \
+            | cat - README.md > /tmp/dockerhub-readme.md
+          # Relative links resolve to nothing on Docker Hub, and sed has no
+          # lookahead, so absolute ones are marked, skipped and unmarked again.
+          sed -i -E \
+            -e 's#\]\(http#](@@KEEP@@http#g' \
+            -e 's#\]\(\##](@@KEEP@@\##g' \
+            -e "s#\]\(([^)@][^)]*)\)#](https://github.com/ivenos/compwire/blob/${GITHUB_REF_NAME}/\1)#g" \
+            -e 's#@@KEEP@@##g' \
+            /tmp/dockerhub-readme.md
+
       - name: Update Docker Hub description
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: peter-evans/dockerhub-description@v5
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}

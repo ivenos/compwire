@@ -15,6 +15,16 @@ generated config, so neither Docker nor a WireGuard kernel module is needed:
 sh test/run_tests.sh
 ```
 
+Your `/bin/sh` is probably not the image's, and some assertions only bite under
+busybox ash. Run it there too; the two runs report different totals on purpose,
+because the container is uid 0 and the permission cases skip themselves:
+
+```bash
+tar c entrypoint.sh Dockerfile test \
+  | docker run --rm -i "$(awk '/^FROM /{print $2; exit}' Dockerfile)" \
+      sh -c 'mkdir /w && cd /w && tar x && sh test/run_tests.sh'
+```
+
 Lint, the same three files CI checks:
 
 ```bash
@@ -31,8 +41,9 @@ docker build -t compwire:test .
 sh test/integration_test.sh compwire:test
 ```
 
-CI runs lint and unit tests once, then the integration tests on amd64 and
-arm64, before anything is published.
+CI runs lint once and the unit suite twice, under the runner's shell and under
+busybox ash, then the integration tests on amd64 and arm64, before anything is
+published.
 
 ## Code style
 
@@ -60,8 +71,11 @@ short imperative subject.
 
 ## Releases
 
-A `v[0-9]*` tag builds the multi-arch image, publishes it to GHCR and Docker Hub
-and moves `latest`. Commits on `main` publish `dev`. The changelog lives in the
+A `v[0-9]+.[0-9]+.[0-9]+*` tag builds the multi-arch image and publishes it to
+GHCR and Docker Hub; a release proper also moves `latest`, a prerelease such as
+`v2.0.0-rc1` does not. Commits on `main` publish `dev`. The tag pattern is
+deliberately narrow, because a tag the semver rules cannot name would push image
+layers that never get one. The changelog lives in the
 GitHub release notes, in Keep a Changelog style
 (https://keepachangelog.com/en/1.1.0/). There is no CHANGELOG.md file.
 

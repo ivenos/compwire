@@ -6,7 +6,8 @@
 
 ## Test plan
 
-<!-- How did you verify your change? Built the image, ran the container, integration tests, manual checks, etc. -->
+<!-- Which role (server or client), which scenario, and whether you covered it with
+     unit tests, integration tests or a manual run. -->
 
 ---
 

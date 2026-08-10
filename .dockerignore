@@ -1,16 +1,1 @@
-.git/
-.github/
-.claude/
-examples/
-test/
-.env
-.env.*
-secrets/
-*.key
-*.psk
-*.md
-.dockerignore
-compose.yml
-compose.yaml
-docker-compose.yml
-docker-compose.yaml
+!entrypoint.sh

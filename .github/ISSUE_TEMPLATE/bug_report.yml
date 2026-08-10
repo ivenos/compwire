@@ -44,6 +44,41 @@ body:
     id: version
     attributes:
       label: compwire image tag
-      placeholder: "e.g. latest, dev, v1.0.0"
+      placeholder: "e.g. latest, dev, 1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: role
+    attributes:
+      label: Role
+      options:
+        - server
+        - client
+        - both
+    validations:
+      required: true
+
+  - type: textarea
+    id: host
+    attributes:
+      label: Host
+      description: >
+        The four things that explain most reports: kernel and distribution
+        (`uname -sr`), architecture (`uname -m`), whether the modules are loaded
+        (`lsmod | grep -E 'wireguard|nft_compat'`) and whether SELinux or
+        AppArmor is enforcing.
+      render: text
+    validations:
+      required: true
+
+  - type: dropdown
+    id: network
+    attributes:
+      label: Network mode
+      options:
+        - "network_mode: host"
+        - bridge with a published port
+        - other
     validations:
       required: true

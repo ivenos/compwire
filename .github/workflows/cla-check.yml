@@ -1,15 +1,23 @@
 name: CLA check
 
+# pull_request_target: with pull_request a contributor could disarm this check
+# from inside the same PR.
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, edited, synchronize, reopened]
 
-# Reads only the PR body from the event payload; no token access needed.
+# Nothing is checked out and no token is needed, which is what makes that safe.
 permissions: {}
+
+# types: [edited] means every edit of the description starts a run.
+concurrency:
+  group: cla-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   cla:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     # Repo owner is implicitly covered. Bots are skipped by account type, so this
     # keeps working if Renovate ever moves to the hosted app (renovate[bot]).
     if: >-
