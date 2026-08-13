@@ -44,7 +44,7 @@ services:
       WG_ROLE: client
       WG_IFACE: wg1
       WG_PRIVATE_KEY: ${WG_CLIENT1_PRIV}
-      # Its own address, matching WG_PEER_CLIENT2_ALLOWED_IPS on the server.
+      # Its own address, matching WG_PEER_CLIENT1_ALLOWED_IPS on the server.
       WG_ADDRESS: 10.77.0.2/32
       WG_SERVER_PUBKEY: ${WG_SERVER_PUB}
       WG_SERVER_ENDPOINT: ${WG_SERVER_HOST:-SET_WG_SERVER_HOST}:51820

@@ -3262,6 +3262,52 @@ fi
 cleanup_mock_env
 
 echo ""
+echo "=== Test 193: One IPv6 address at two prefixes is a route pair, not a second interface address ==="
+setup_mock_env
+run_entrypoint WG_ROLE=client "WG_PRIVATE_KEY=$K_PRIV" "WG_SERVER_PUBKEY=$K_SRVPUB" \
+  WG_SERVER_ENDPOINT=vpn.example.com:51820 WG_ADDRESS=fd00::2/128 \
+  WG_ALLOWED_IPS=fd00::1/64,fd00::1/128 || true
+assert_contains "Both prefixes reach the client config" "AllowedIPs          = fd00::1/64,fd00::1/128" "$CONFIG_FILE"
+run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" "WG_PEER_BERLIN_PUBKEY=$K_BERLIN" \
+  WG_PEER_BERLIN_ALLOWED_IPS=fd00::1/64,fd00::1/128 || true
+assert_contains "Both prefixes reach a peer" "AllowedIPs          = fd00::1/64,fd00::1/128" "$CONFIG_FILE"
+run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" WG_ADDRESS=fd00::1/64,fd00::1/128 || true
+assert_stdout_contains "An interface address still takes it only once" "WG_ADDRESS already lists the address"
+run_entrypoint WG_ROLE=client "WG_PRIVATE_KEY=$K_PRIV" "WG_SERVER_PUBKEY=$K_SRVPUB" \
+  WG_SERVER_ENDPOINT=vpn.example.com:51820 WG_ALLOWED_IPS=fd00::1/64,fd00::1/64 || true
+assert_stdout_contains "A repeated spelling is still a duplicate" "lists 'fd00::1/64' twice"
+cleanup_mock_env
+
+echo ""
+echo "=== Test 194: A misspelled WG_ variable is named instead of dropped ==="
+setup_mock_env
+run_entrypoint WG_ROLE=client "WG_PRIVATE_KEY=$K_PRIV" "WG_SERVER_PUBKEY=$K_SRVPUB" \
+  WG_SERVER_ENDPOINT=vpn.example.com:51820 WG_ALOWED_IPS=0.0.0.0/0 || true
+assert_stdout_contains "The typo is named" "No such variable, ignored: WG_ALOWED_IPS"
+run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" WG_MTUU=1420 WG_ADRESS=10.77.0.1/24 || true
+assert_stdout_contains "Several typos are listed together" "ignored: WG_ADRESS WG_MTUU"
+run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" WG_IFACE=wg3 WG_ADDRESS=10.77.0.1/24 \
+  WG_PORT=51821 WG_MTU=1380 WG_TABLE=off WG_DNS=1.1.1.1 WG_PRE_UP=true WG_POST_UP=true \
+  WG_PRE_DOWN=true WG_POST_DOWN=true "WG_PEER_BERLIN_PUBKEY=$K_BERLIN" \
+  WG_PEER_BERLIN_ALLOWED_IPS=10.77.0.2/32 || true
+assert_stdout_not_contains "No documented server variable is flagged" "No such variable"
+printf '%s' "$K_PRIVFILE" > "$TMPDIR_TEST/known_priv.txt"
+printf '%s' "$K_CLPSKFILE" > "$TMPDIR_TEST/known_psk.txt"
+run_entrypoint WG_ROLE=client "WG_PRIVATE_KEY_FILE=$TMPDIR_TEST/known_priv.txt" \
+  "WG_PSK_FILE=$TMPDIR_TEST/known_psk.txt" "WG_SERVER_PUBKEY=$K_SRVPUB" \
+  WG_SERVER_ENDPOINT=vpn.example.com:51820 WG_ALLOWED_IPS=0.0.0.0/0 WG_KEEPALIVE=15 || true
+assert_stdout_not_contains "No documented client variable is flagged" "No such variable"
+run_entrypoint WG_ROLE=client "WG_PRIVATE_KEY=$K_PRIV" "WG_PSK=$K_CLPSK" "WG_SERVER_PUBKEY=$K_SRVPUB" \
+  WG_SERVER_ENDPOINT=vpn.example.com:51820 || true
+assert_stdout_not_contains "WG_PSK is not flagged" "No such variable"
+run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" "WG_PEER_BERLIN_PUBKEY=$K_BERLIN" \
+  WG_PEER_BERLIN_ALLOWED_IPS=10.77.0.2/32 || true
+assert_stdout_not_contains "Peer variables are left to the peer check" "No such variable"
+run_entrypoint WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" WG_PEER_BERLIN_PUBKY=x || true
+assert_stdout_contains "A misspelled peer attribute is still fatal" "Unknown peer variable"
+cleanup_mock_env
+
+echo ""
 echo "=================================="
 printf   "  Result: %d passed, %d failed\n" "$PASS" "$FAIL"
 echo "=================================="

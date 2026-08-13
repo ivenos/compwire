@@ -220,7 +220,7 @@ network_key() {
 }
 
 validate_cidr_list() {
-  _label="$1" _list="$2"
+  _label="$1" _list="$2" _ifaddr="${3:-0}"
   validate_no_newline "$_label" "$_list"
   # A trailing comma produces no empty field when the shell splits the list.
   case "$_list" in
@@ -239,16 +239,18 @@ validate_cidr_list() {
       *" $_norm "*) IFS="$_oIFS"; die "$_label lists '$_entry' twice." ;;
     esac
     _cl_seen="${_cl_seen} ${_norm}"
-    # ipv6_chk_same_addr ignores the prefix; the IPv4 path keys on both and takes them.
-    case "$_entry" in
-      *:*)
-        _cl_addr="${_norm%%/*}"
-        case " $_cl_seen6 " in
-          *" $_cl_addr "*) IFS="$_oIFS"; die "$_label already lists the address in '$_entry' with a different prefix. The kernel compares IPv6 addresses without their prefix and refuses the second one." ;;
-        esac
-        _cl_seen6="${_cl_seen6} ${_cl_addr}"
-        ;;
-    esac
+    # ipv6_chk_same_addr ignores the prefix; it guards `ip address add`, not routes.
+    if [ "$_ifaddr" = "1" ]; then
+      case "$_entry" in
+        *:*)
+          _cl_addr="${_norm%%/*}"
+          case " $_cl_seen6 " in
+            *" $_cl_addr "*) IFS="$_oIFS"; die "$_label already lists the address in '$_entry' with a different prefix. The kernel compares IPv6 addresses without their prefix and refuses the second one." ;;
+          esac
+          _cl_seen6="${_cl_seen6} ${_cl_addr}"
+          ;;
+      esac
+    fi
   done
   IFS="$_oIFS"
 }
@@ -407,6 +409,22 @@ _blank="$(awk 'BEGIN { for (k in ENVIRON) if (k ~ /^WG_/ && ENVIRON[k] == "") pr
 _blank="${_blank% }"
 [ -n "$_blank" ] && die "Set but empty: ${_blank}. Compose substitutes a missing .env entry as an empty value; give the variable a value or leave it out entirely."
 
+# WG_PEER_* is checked per peer below.
+WG_KNOWN="WG_ROLE WG_IFACE WG_ADDRESS WG_PORT WG_MTU WG_TABLE WG_DNS"
+WG_KNOWN="$WG_KNOWN WG_PRIVATE_KEY WG_PRIVATE_KEY_FILE WG_PSK WG_PSK_FILE"
+WG_KNOWN="$WG_KNOWN WG_SERVER_PUBKEY WG_SERVER_ENDPOINT WG_ALLOWED_IPS WG_KEEPALIVE"
+WG_KNOWN="$WG_KNOWN WG_PRE_UP WG_POST_UP WG_PRE_DOWN WG_POST_DOWN"
+_wg_vars="$(awk 'BEGIN { for (k in ENVIRON) if (k ~ /^WG_/ && k !~ /^WG_PEER_/) print k }' | sort)"
+_unknown=""
+# shellcheck disable=SC2086
+for _uv in $_wg_vars; do
+  case " $WG_KNOWN " in
+    *" $_uv "*) ;;
+    *) _unknown="${_unknown}${_unknown:+ }${_uv}" ;;
+  esac
+done
+[ -n "$_unknown" ] && warn "No such variable, ignored: ${_unknown}. The README lists every WG_* the container reads."
+
 WG_ROLE="${WG_ROLE:-}"
 [ -z "$WG_ROLE" ] && die "WG_ROLE must be 'server' or 'client'."
 case "$WG_ROLE" in
@@ -544,7 +562,7 @@ else
   [ -n "$_trimmed" ] && warn "Ignored for WG_ROLE=client: ${_trimmed}. A client describes one server, with WG_SERVER_PUBKEY and WG_SERVER_ENDPOINT."
 fi
 
-validate_cidr_list "WG_ADDRESS" "$WG_ADDRESS"
+validate_cidr_list "WG_ADDRESS" "$WG_ADDRESS" 1
 
 # The default is the server's address in 10.77.0.0/24, so a client on that range is fine.
 if [ "$WG_ROLE" = "client" ] && [ -z "$_allowed_set" ]; then
