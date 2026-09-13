@@ -61,8 +61,8 @@ published.
 Every knob is an environment variable, which makes a new one a four-part
 change: the validation in `entrypoint.sh`, the line it writes to the config, a
 case in `test/run_tests.sh` covering both an accepted and a rejected value, and
-a row in the README table for each role it applies to. A variable that is not
-in the README does not exist.
+a row in the README table for its role, or for both roles. A variable that is
+not in the README does not exist.
 
 ## Commits
 

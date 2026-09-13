@@ -39,9 +39,9 @@ jobs:
         run: sh test/run_tests.sh
 
       - name: Check the compose files parse
-        # compose.yml is shipped, not just documentation, and nothing else reads these.
+        # Nothing else reads the examples.
         run: |
-          for f in compose.yml examples/*.yaml; do
+          for f in examples/*.yaml; do
             echo "$f"
             docker compose -f "$f" config -q
           done
@@ -119,9 +119,9 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-          # GitHub reports BUSL-1.1 as NOASSERTION and that ends up in every image.
+          # GitHub reports the deprecated GPL-3.0, which leaves -only open.
           labels: |
-            org.opencontainers.image.licenses=BUSL-1.1
+            org.opencontainers.image.licenses=GPL-3.0-only
 
       - name: Refuse to push digests that no tag will reference
         # The trigger glob is wider than the semver rules, and the push job only

@@ -1,116 +1,135 @@
-# compwire
+<div align="center">
 
-Minimal Docker image running WireGuard as a **server** or **client**, configured entirely via environment variables.
+<img alt="compwire" src="https://raw.githubusercontent.com/ivenos/compwire/main/.github/assets/compwire-logo.svg" width="50%">
 
-```
-ivenos/compwire:latest
-```
+<a href="https://hub.docker.com/r/ivenos/compwire"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/docker/size/ivenos/compwire.svg?variant=secondary&amp;mode=dark"><img alt="Docker Image Size" src="https://shieldcn.dev/docker/size/ivenos/compwire.svg?variant=secondary&amp;mode=light"></picture></a>
+<a href="https://hub.docker.com/r/ivenos/compwire"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/docker/pulls/ivenos/compwire.svg?variant=secondary&amp;mode=dark"><img alt="Docker Pulls" src="https://shieldcn.dev/docker/pulls/ivenos/compwire.svg?variant=secondary&amp;mode=light"></picture></a>
+<a href="https://github.com/ivenos/compwire/blob/main/LICENSE"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/license-GPL_3.0.svg?variant=secondary&amp;mode=dark"><img alt="License" src="https://shieldcn.dev/badge/license-GPL_3.0.svg?variant=secondary&amp;mode=light"></picture></a>
 
-Requires the `NET_ADMIN` capability and a Linux kernel ≥ 5.6 (WireGuard built-in). Some distributions do not load the module on their own; if the container reports that wg-quick could not bring up the interface, run `modprobe wireguard` on the host.
+compwire is a minimal Docker image running WireGuard as a server or client, configured entirely via environment variables.
+
+</div>
 
 ---
 
 ## Quick start
 
-1. Generate keypairs for each node:
+compwire needs a Linux host with WireGuard in the kernel (5.6 or newer). If the log says wg-quick could not bring up the interface, run `modprobe wireguard` on the host.
 
-   ```sh
-   docker run --rm ivenos/compwire genkey
-   ```
+Generate a key pair for each node. `genpsk` prints a pre-shared key instead.
 
-   For a pre-shared key, use `genpsk` instead.
+```sh
+docker run --rm ivenos/compwire genkey
+```
 
-2. Copy [`compose.yml`](compose.yml) and fill in all `<...>` placeholders with your keys.
+### Server
 
-3. Start:
+```yaml
+services:
+  compwire:
+    image: ivenos/compwire:latest
+    network_mode: host
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN]
+    environment:
+      WG_ROLE: server
+      WG_PRIVATE_KEY: <server-private-key>
+      WG_ADDRESS: 10.77.0.1/24
+      WG_PEER_CLIENT_PUBKEY: <client-public-key>
+      WG_PEER_CLIENT_ALLOWED_IPS: 10.77.0.2/32
+    restart: unless-stopped
+```
 
-   ```sh
-   docker compose up -d
-   docker compose logs -f
-   ```
+Add one `WG_PEER_<ID>_*` block per client. UDP port 51820 has to be reachable from the clients.
 
-The `compose.yml` runs one server and one client on the same host. In production each node runs on its own machine with `WG_SERVER_ENDPOINT` pointing to the server's public IP or hostname. See [`examples/`](examples/) for multi-client, full-tunnel, IPv6, and Docker-secrets setups.
+### Client
 
-Set `WG_ADDRESS` on every client to the address the server lists for it in `WG_PEER_<ID>_ALLOWED_IPS`. If the two disagree, the handshake still succeeds and the healthcheck still reports healthy, but the server drops every packet from that peer.
+```yaml
+services:
+  compwire:
+    image: ivenos/compwire:latest
+    network_mode: host
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN]
+    environment:
+      WG_ROLE: client
+      WG_PRIVATE_KEY: <client-private-key>
+      WG_ADDRESS: 10.77.0.2/32
+      WG_SERVER_PUBKEY: <server-public-key>
+      WG_SERVER_ENDPOINT: vpn.example.com:51820
+    restart: unless-stopped
+```
 
----
+`WG_ADDRESS` has to match what the server sets in `WG_PEER_<ID>_ALLOWED_IPS` for this client. Otherwise the handshake succeeds, but the server drops every packet.
 
-## Environment variables - Server
+Start both with `docker compose up -d`. The [examples](https://github.com/ivenos/compwire/tree/main/examples) cover several clients, a full tunnel, an IPv6 endpoint and Docker secrets.
 
-Peer IDs (`<ID>`) must be uppercase letters and digits with no underscore, e.g. `LAPTOP`, `NODE1`. A `WG_PSK` set on a server is ignored with a warning; pre-shared keys belong to the individual peer.
+## Environment variables
 
-Allowed ranges are compared as networks, so `10.0.0.1/24` and `10.0.0.2/24` collide while nested prefixes such as `10.9.0.0/16` and `10.9.1.0/24` do not. No peer may claim the server's own address as a host route.
+### Both roles
 
-| Variable | Required | Default | Description |
-|---|:---:|---|---|
-| `WG_ROLE` | ✔️ | - | Must be `server` |
-| `WG_PRIVATE_KEY` | ✔️¹ | - | WireGuard private key (base64) |
-| `WG_PRIVATE_KEY_FILE` | ✔️¹ | - | Path to file containing the private key |
-| `WG_PEER_<ID>_PUBKEY` | ✔️² | - | Peer public key. Must differ from every other peer's |
-| `WG_PEER_<ID>_ALLOWED_IPS` | ✔️² | - | Allowed IP ranges for this peer (comma-separated CIDRs). No range may repeat across peers |
-| `WG_PEER_<ID>_PSK` | | - | Pre-shared key for this peer |
-| `WG_PEER_<ID>_PSK_FILE` | | - | Path to file containing the peer PSK |
-| `WG_PEER_<ID>_ENDPOINT` | | - | Peer endpoint `host:port` (or `[address]:port` for IPv6) - enables server-initiated connections to peers with a static IP |
-| `WG_PEER_<ID>_KEEPALIVE` | | - | PersistentKeepalive for this peer in seconds (1-65535) |
-| `WG_ADDRESS` | | `10.77.0.1/24` | Interface address(es). Comma-separated, supports IPv4, IPv6, and dual-stack (e.g. `10.77.0.1/24,fd00::1/64`) |
-| `WG_PORT` | | `51820` | UDP listen port (1-65535) |
-| `WG_IFACE` | | `wg0` | Interface name (alphanumeric, `-`, `_`, at most 15 characters, starting with a letter or digit). `all`, `interfaces` and `default` are reserved |
-| `WG_DNS` | | - | DNS servers and/or search domains, comma-separated (e.g. `1.1.1.1,8.8.8.8`). At least one server is required |
-| `WG_MTU` | | - | Interface MTU (1280-9000) |
-| `WG_TABLE` | | - | Routing table: `auto`, `off`, or a numeric table ID (1-4294967295) |
-| `WG_PRE_UP` | | - | Shell command to run before the interface comes up |
-| `WG_POST_UP` | | - | Shell command to run after the interface comes up |
-| `WG_PRE_DOWN` | | - | Shell command to run before the interface goes down |
-| `WG_POST_DOWN` | | - | Shell command to run after the interface goes down |
+| Variable | Default | Description |
+|---|---|---|
+| `WG_ROLE` | - | `server` or `client` (required) |
+| `WG_PRIVATE_KEY` | - | Private key of this node (required, or `WG_PRIVATE_KEY_FILE`) |
+| `WG_PRIVATE_KEY_FILE` | - | File containing the private key |
+| `WG_ADDRESS` | Server `10.77.0.1/24`, client `10.77.0.2/32` | Tunnel address, comma-separated for IPv4 and IPv6 |
+| `WG_PORT` | Server `51820`, client random | UDP listen port. Servers sharing the host network each need their own |
+| `WG_IFACE` | `wg0` | Interface name, at most 15 characters. Containers sharing the host network each need their own |
+| `WG_DNS` | - | DNS servers and search domains for the container's own resolver, comma-separated, at least one server |
+| `WG_MTU` | - | Interface MTU, 1280-9000 |
+| `WG_TABLE` | - | Routing table: `auto`, `off` or a table ID |
+| `WG_PRE_UP` | - | Shell command run before the interface comes up |
+| `WG_POST_UP` | - | Shell command run after the interface comes up |
+| `WG_PRE_DOWN` | - | Shell command run before the interface goes down |
+| `WG_POST_DOWN` | - | Shell command run after the interface goes down |
 
-¹ One of `WG_PRIVATE_KEY` or `WG_PRIVATE_KEY_FILE` is required.
-² Per peer. A server without any peer starts and warns; it just accepts no connections.
+Hook commands run as root inside the container. `%i` stands for the interface name.
 
----
+### Server
 
-## Environment variables - Client
+`<ID>` names the peer in uppercase letters and digits, e.g. `WG_PEER_NODE1_PUBKEY`.
 
-| Variable | Required | Default | Description |
-|---|:---:|---|---|
-| `WG_ROLE` | ✔️ | - | Must be `client` |
-| `WG_PRIVATE_KEY` | ✔️¹ | - | WireGuard private key (base64) |
-| `WG_PRIVATE_KEY_FILE` | ✔️¹ | - | Path to file containing the private key |
-| `WG_SERVER_PUBKEY` | ✔️ | - | Server public key |
-| `WG_SERVER_ENDPOINT` | ✔️ | - | Server address as `host:port`, or `[address]:port` for a literal IPv6 address |
-| `WG_ADDRESS` | | `10.77.0.2/32` | Interface address(es). Comma-separated, supports IPv4, IPv6, and dual-stack |
-| `WG_PORT` | | - | UDP listen port (1-65535). If unset, the kernel picks a free port |
-| `WG_IFACE` | | `wg0` | Interface name (alphanumeric, `-`, `_`, at most 15 characters, starting with a letter or digit). `all`, `interfaces` and `default` are reserved |
-| `WG_ALLOWED_IPS` | | `10.77.0.1/32` | Routes to send through the tunnel. Use `0.0.0.0/0` for a full tunnel |
-| `WG_KEEPALIVE` | | `25` | PersistentKeepalive in seconds (1-65535) |
-| `WG_PSK` | | - | Pre-shared key |
-| `WG_PSK_FILE` | | - | Path to file containing the PSK |
-| `WG_DNS` | | - | DNS servers and/or search domains, comma-separated. At least one server is required |
-| `WG_MTU` | | - | Interface MTU (1280-9000) |
-| `WG_TABLE` | | - | Routing table: `auto`, `off`, or a numeric table ID (1-4294967295) |
-| `WG_PRE_UP` | | - | Shell command to run before the interface comes up |
-| `WG_POST_UP` | | - | Shell command to run after the interface comes up |
-| `WG_PRE_DOWN` | | - | Shell command to run before the interface goes down |
-| `WG_POST_DOWN` | | - | Shell command to run after the interface goes down |
+| Variable | Default | Description |
+|---|---|---|
+| `WG_PEER_<ID>_PUBKEY` | - | Public key of the peer (required) |
+| `WG_PEER_<ID>_ALLOWED_IPS` | - | Addresses routed to the peer, comma-separated CIDRs (required) |
+| `WG_PEER_<ID>_PSK` | - | Pre-shared key |
+| `WG_PEER_<ID>_PSK_FILE` | - | File containing the pre-shared key |
+| `WG_PEER_<ID>_ENDPOINT` | - | `host:port` or `[address]:port` of a peer with a fixed address, so the server can connect first |
+| `WG_PEER_<ID>_KEEPALIVE` | - | Keepalive in seconds, 1-65535 |
 
-¹ One of `WG_PRIVATE_KEY` or `WG_PRIVATE_KEY_FILE` is required.
+### Client
 
-## Notes
+| Variable | Default | Description |
+|---|---|---|
+| `WG_SERVER_PUBKEY` | - | Public key of the server (required) |
+| `WG_SERVER_ENDPOINT` | - | Server as `host:port` or `[address]:port` (required). A hostname is resolved once at startup |
+| `WG_ALLOWED_IPS` | `10.77.0.1/32` | Destinations routed through the tunnel, comma-separated CIDRs. `0.0.0.0/0` for a full tunnel |
+| `WG_KEEPALIVE` | `25` | Keepalive in seconds, 1-65535 |
+| `WG_PSK` | - | Pre-shared key |
+| `WG_PSK_FILE` | - | File containing the pre-shared key |
 
-- Hook commands (`PRE_UP`, `POST_UP`, `PRE_DOWN`, `POST_DOWN`) run as root inside the container. Use `%i` as a placeholder for the interface name (substituted by wg-quick).
-- The server healthcheck verifies that the interface exists and carries a key. The client healthcheck additionally checks for a recent peer handshake (≤ 185 s, or `WG_KEEPALIVE` + 125 s once the keepalive exceeds 60 s, since a longer keepalive stretches the interval between handshakes).
-- The container logs the initial peer connection state after 30 s and any subsequent changes (full connectivity, partial, or disconnected).
-- A `WG_*` variable set to an empty value is an error, not an omission: Compose writes a missing `.env` entry into the container as an empty string, and reading that as "unset" would drop a `WG_PSK`. Leave the variable out instead.
-- `WG_SERVER_ENDPOINT` is resolved once, when the interface comes up. If the server's address changes behind a hostname, the client keeps sending to the old one and goes unhealthy; Docker does not restart on unhealthy, so that needs a `docker restart` (or a watchdog).
-- **Secrets:** a value passed as an environment variable stays readable in `docker inspect` and `/proc/<pid>/environ` for the container's whole lifetime. The `*_FILE` variants avoid that, see [`examples/secrets.yaml`](examples/secrets.yaml).
-- **IP forwarding** is a host kernel setting, not a container setting. If the server routes traffic between peers (full tunnel with `WG_ALLOWED_IPS=0.0.0.0/0`, or client-to-client as in the multi-client example), enable it on the host: `sysctl -w net.ipv4.ip_forward=1` (persist via `/etc/sysctl.conf` or `/etc/sysctl.d/`). The iptables `FORWARD` rules in the examples are not sufficient on their own.
-- **Full tunnel** clients need one more host setting: `sysctl -w net.ipv4.conf.all.src_valid_mark=1`. For a `0.0.0.0/0` route wg-quick sets this itself, but `/proc/sys` is read-only inside a container, so the write fails and takes wg-quick down with it. Set on the host, wg-quick skips it.
-- **A hook is one shell command.** When a `PostUp` fails, wg-quick removes the interface without running `PostDown`, so whatever ran before the failure stays on the host. Put the fragile part first, as the full-tunnel example now does.
-- Two containers must not share one bind-mounted `/etc/wireguard` under the same `WG_IFACE`: the config is named after the interface, so the second to start overwrites the first. A start that fails leaves an existing config alone.
-- With `network_mode: host` the WireGuard interface lives in the host's network namespace and outlives a container that was killed rather than stopped. On start compwire reclaims such an interface if it carries its own public key, and refuses to start if the interface belongs to anything else.
-- With `network_mode: host`, all services in the same Compose file share the host network stack and therefore need distinct `WG_IFACE` values (e.g. `wg0`, `wg1`, `wg2`). Clients don't bind a fixed port unless `WG_PORT` is set; multiple servers additionally need distinct `WG_PORT` values. They also share one routing table: two clients of the same server both want a route to its tunnel address, and the second one fails with `RTNETLINK answers: File exists`. A server plus one client works, two clients need two hosts. In production each node runs on its own host, so this does not apply.
+## Routing through the server
 
----
+A full tunnel and traffic between clients both need IP forwarding on the server host:
+
+```sh
+sysctl -w net.ipv4.ip_forward=1
+```
+
+A full-tunnel client also needs this on its own host:
+
+```sh
+sysctl -w net.ipv4.conf.all.src_valid_mark=1
+```
+
+Neither can be set from inside the container. The matching iptables rules are in the [full-tunnel](https://github.com/ivenos/compwire/blob/main/examples/full-tunnel.yaml) and [multi-client](https://github.com/ivenos/compwire/blob/main/examples/multi-client.yaml) examples.
 
 ## License
 
-[BSL 1.1](LICENSE) - free for personal and non-commercial use.
+Copyright © 2026 Iven Schlösser. compwire is free software, licensed under the [GNU General Public License v3.0 only](https://github.com/ivenos/compwire/blob/main/LICENSE). You may use, modify and redistribute it. Anyone distributing a modified version must release it under the same license and make its source code available.
+
+The Docker image is built on Alpine Linux and ships wireguard-tools and other packages, each under its own license.
+
+compwire is not affiliated with or endorsed by the WireGuard project. "WireGuard" and the "WireGuard" logo are registered trademarks of Jason A. Donenfeld.
