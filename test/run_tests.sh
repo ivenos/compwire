@@ -208,7 +208,8 @@ EOF
   cat > "$MOCK_BIN/ip" <<'EOF'
 #!/bin/sh
 case "$*" in
-  "link show dev "*) [ "${MOCK_IFACE_EXISTS:-0}" = "1" ] && exit 0
+  "link show dev "*) [ -n "${MOCK_IP_DELAY:-}" ] && /bin/sleep "$MOCK_IP_DELAY"
+                     [ "${MOCK_IFACE_EXISTS:-0}" = "1" ] && exit 0
                      [ -n "${MOCK_IFACE_FLAG:-}" ] && [ -f "$MOCK_IFACE_FLAG" ] && exit 0
                      exit 1 ;;
   "link del "*)      [ "${MOCK_IPDEL_FAIL:-0}" = "1" ] && {
@@ -254,7 +255,7 @@ cleanup_mock_env() {
         MOCK_WGQUICK_LOG MOCK_WGQUICK_ENVDUMP MOCK_WGSHOW_FAIL MOCK_PUBKEY_FAIL \
         MOCK_HANDSHAKE MOCK_HANDSHAKE2 MOCK_HANDSHAKE_AFTER MOCK_HS_GONE_AFTER MOCK_NO_PEERS MOCK_WG_LOG \
         MOCK_FLAG MOCK_SLEEP_REAL MOCK_SLEEP_LOG MOCK_SORT_DELAY MOCK_HS_SEQ MOCK_HS_SEQ_STATE \
-        MOCK_IFACE_FLAG MOCK_CLAIM_PROBE MOCK_IPDEL_FAIL MOCK_RESOLVCONF_LOG 2>/dev/null || true
+        MOCK_IFACE_FLAG MOCK_CLAIM_PROBE MOCK_IPDEL_FAIL MOCK_IP_DELAY MOCK_RESOLVCONF_LOG 2>/dev/null || true
 }
 
 # Every absolute path the entrypoint writes to has to land inside TMPDIR_TEST.
@@ -2202,23 +2203,33 @@ fi
 cleanup_mock_env
 
 echo ""
-echo "=== Test 132: A signal before bring-up still clears the key from disk ==="
+echo "=== Test 132: The key reaches the disk after validation, and a signal before bring-up clears it ==="
 setup_mock_env
 patch_entrypoint
 #  The staged path: the config is only renamed in once every check has passed.
 CFG_EARLY="$WG_CONFIG_DIR/wg0.conf.new"
-#  Parked between the config write and the teardown traps.
-env -i PATH="$PATH" MOCK_IFACE_EXISTS=0 MOCK_SORT_DELAY=3 \
+#  Parked twice: in the peer sort during validation, then in the leftover check after the write.
+env -i PATH="$PATH" MOCK_IFACE_EXISTS=0 MOCK_SORT_DELAY=1 MOCK_IP_DELAY=3 \
   WG_ROLE=server "WG_PRIVATE_KEY=$K_PRIV" \
   "WG_PEER_A_PUBKEY=$K_BERLIN" WG_PEER_A_ALLOWED_IPS=10.77.0.2/32 \
   sh "$PATCHED" > "$TMPDIR_TEST/stdout.txt" 2>&1 &
 EARLY_PID=$!
 _wait=0
+while [ "$_wait" -lt 100 ] && ! grep -q "Role: server" "$TMPDIR_TEST/stdout.txt" 2>/dev/null; do
+  /bin/sleep 0.05; _wait=$(( _wait + 1 ))
+done
+/bin/sleep 0.4
+if [ -e "$CFG_EARLY" ] || [ -e "$WG_CONFIG_DIR/wg0.conf" ]; then
+  fail "The config was written before peer validation finished"
+else
+  ok "Nothing holding the key is on disk while validation is still running"
+fi
+_wait=0
 while [ "$_wait" -lt 100 ] && [ ! -s "$CFG_EARLY" ]; do /bin/sleep 0.05; _wait=$(( _wait + 1 )); done
 if grep -qF "PrivateKey = $K_PRIV" "$CFG_EARLY" 2>/dev/null; then
-  ok "The key is on disk while validation is still running"
+  ok "The key is on disk once every check has passed"
 else
-  fail "The config was not written before peer validation"
+  fail "The staged config was not written after validation"
 fi
 kill -TERM "$EARLY_PID" 2>/dev/null || true
 EARLY_RC=0; wait "$EARLY_PID" || EARLY_RC=$?

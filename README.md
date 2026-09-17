@@ -12,7 +12,7 @@ compwire is a minimal Docker image running WireGuard as a server or client, conf
 
 ---
 
-## Quick start
+## Installation
 
 compwire needs a Linux host with WireGuard in the kernel (5.6 or newer). If the log says wg-quick could not bring up the interface, run `modprobe wireguard` on the host.
 
@@ -128,7 +128,7 @@ Neither can be set from inside the container. The matching iptables rules are in
 
 ## License
 
-Copyright © 2026 Iven Schlösser. compwire is free software, licensed under the [GNU General Public License v3.0 only](https://github.com/ivenos/compwire/blob/main/LICENSE). You may use, modify and redistribute it. Anyone distributing a modified version must release it under the same license and make its source code available.
+Copyright © Iven Schlösser. compwire is free software, licensed under the [GNU General Public License v3.0 only](https://github.com/ivenos/compwire/blob/main/LICENSE). You may use, modify and redistribute it. Anyone distributing a modified version must release it under the same license and make its source code available.
 
 The Docker image is built on Alpine Linux and ships wireguard-tools and other packages, each under its own license.
 

@@ -75,7 +75,7 @@ scenario_start() {
   _NET="$_net_name"
 }
 
-# Labelled rather than listed: `docker run -d` can exit non-zero with the container
+# Labeled rather than listed: `docker run -d` can exit non-zero with the container
 # already created, and a name recorded only on success leaves that one behind.
 scenario_run() {
   _name="$1"; shift
@@ -492,7 +492,7 @@ sleep 2
 # A container that died on its own would pass the timing and exit-code checks
 # below without ever exercising the signal path.
 if ! assert_running "$STOPC" "shutdown: client is up before the signal"; then
-  skip "shutdown: timing, exit code and cleanup count (nothing was signalled)"
+  skip "shutdown: timing, exit code and cleanup count (nothing was signaled)"
 else
 _t0=$(date +%s)
 docker stop -t 10 "$STOPC" >/dev/null 2>&1 || true
@@ -547,10 +547,10 @@ while [ "$_w" -lt 50 ]; do
   sleep 0.1; _w=$(( _w + 1 ))
 done
 if docker logs "$VALC" 2>&1 | grep -q "Starting WireGuard"; then
-  fail "validation signal: validation was already over before anything was signalled"
-  skip "validation signal: timing and exit code (nothing was signalled)"
+  fail "validation signal: validation was already over before anything was signaled"
+  skip "validation signal: timing and exit code (nothing was signaled)"
 elif ! assert_running "$VALC" "validation signal: container is still validating"; then
-  skip "validation signal: timing and exit code (nothing was signalled)"
+  skip "validation signal: timing and exit code (nothing was signaled)"
 else
   _t0=$(date +%s)
   docker stop -t 10 "$VALC" >/dev/null 2>&1 || true

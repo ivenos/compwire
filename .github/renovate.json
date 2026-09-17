@@ -3,11 +3,16 @@
   "extends": ["config:recommended"],
   "dependencyDashboard": false,
   "labels": ["dependencies"],
+  "minimumReleaseAge": "3 days",
+  "minimumReleaseAgeBehaviour": "timestamp-optional",
+  "platformAutomerge": false,
+  "automergeStrategy": "squash",
   "packageRules": [
     {
       "matchManagers": ["github-actions"],
       "groupName": "GitHub Actions",
-      "commitMessagePrefix": "ci:"
+      "commitMessagePrefix": "ci:",
+      "automerge": true
     },
     {
       "matchManagers": ["dockerfile", "docker-compose"],

@@ -628,18 +628,11 @@ done
   warn "Could not claim ${RUNFILE}; a second entrypoint in this container will not see that the tunnel has an owner."
 trap release_claim EXIT
 
-# --- Write WireGuard config ---
-# The only thing that sets the config's mode; it is always freshly created below.
-umask 077
-mkdir -p /etc/wireguard
+# --- Build WireGuard config ---
 # Renamed in once every check has passed: on a shared /etc/wireguard a container
 # that starts and fails used to truncate the live config.
 CFG_FINAL="/etc/wireguard/${WG_IFACE}.conf"
 CFG="${CFG_FINAL}.new"
-# Unlinked first, then created with `set -C`: a plain truncate follows a symlink.
-rm -f "$CFG" 2>/dev/null || die "Could not replace ${CFG}."
-( set -C; : > "$CFG" ) 2>/dev/null ||
-  die "Could not create ${CFG}. A bind-mounted /etc/wireguard has to be writable by the container, and on an SELinux host it also needs a label the container may write (add :z to the mount)."
 
 # rename(2) replaces the destination path itself, so a symlink there is overwritten.
 commit_config() {
@@ -651,26 +644,25 @@ commit_config() {
   return 0
 }
 
-{
-  printf '[Interface]\n'
-  printf '%-11s= %s\n' "Address"    "$WG_ADDRESS"
-  [ -n "$WG_PORT" ] && printf '%-11s= %s\n' "ListenPort" "$WG_PORT"
-  printf '%-11s= %s\n' "PrivateKey" "$WG_PRIVATE_KEY"
-  [ -n "$WG_DNS"       ] && printf '%-11s= %s\n' "DNS"      "$WG_DNS"
-  [ -n "$WG_MTU"       ] && printf '%-11s= %s\n' "MTU"      "$WG_MTU"
-  [ -n "$WG_TABLE"     ] && printf '%-11s= %s\n' "Table"    "$WG_TABLE"
-  [ -n "$WG_PRE_UP"    ] && printf '%-11s= %s\n' "PreUp"    "$WG_PRE_UP"
-  [ -n "$WG_POST_UP"   ] && printf '%-11s= %s\n' "PostUp"   "$WG_POST_UP"
-  [ -n "$WG_PRE_DOWN"  ] && printf '%-11s= %s\n' "PreDown"  "$WG_PRE_DOWN"
-  [ -n "$WG_POST_DOWN" ] && printf '%-11s= %s\n' "PostDown" "$WG_POST_DOWN"
-} > "$CFG"
+# Written in one go, so the key reaches the disk only after every check has passed.
+_nl='
+'
+_cfg=""
+cfg_add()   { _cfg="${_cfg}$1${_nl}"; }
+cfg_iface() { cfg_add "$(printf '%-11s= %s' "$1" "$2")"; }
+cfg_peer()  { cfg_add "$(printf '%-20s= %s' "$1" "$2")"; }
 
-# The file holds the private key while peer validation can still abort. INT and TERM
-# too, because as PID 1 the shell drops an untrapped signal; cleared first, or EXIT
-# removes a claim somebody else has taken meanwhile.
-trap 'trap - INT TERM EXIT; release_claim; rm -f "$CFG"; exit 130' INT
-trap 'trap - INT TERM EXIT; release_claim; rm -f "$CFG"; exit 143' TERM
-trap 'release_claim; rm -f "$CFG"' EXIT
+cfg_add '[Interface]'
+cfg_iface Address    "$WG_ADDRESS"
+[ -n "$WG_PORT" ] && cfg_iface ListenPort "$WG_PORT"
+cfg_iface PrivateKey "$WG_PRIVATE_KEY"
+[ -n "$WG_DNS"       ] && cfg_iface DNS      "$WG_DNS"
+[ -n "$WG_MTU"       ] && cfg_iface MTU      "$WG_MTU"
+[ -n "$WG_TABLE"     ] && cfg_iface Table    "$WG_TABLE"
+[ -n "$WG_PRE_UP"    ] && cfg_iface PreUp    "$WG_PRE_UP"
+[ -n "$WG_POST_UP"   ] && cfg_iface PostUp   "$WG_POST_UP"
+[ -n "$WG_PRE_DOWN"  ] && cfg_iface PreDown  "$WG_PRE_DOWN"
+[ -n "$WG_POST_DOWN" ] && cfg_iface PostDown "$WG_POST_DOWN"
 
 unset WG_PRIVATE_KEY
 
@@ -812,14 +804,13 @@ if [ "$WG_ROLE" = "server" ]; then
 
     log "Adding peer: ${id} | AllowedIPs: ${peer_allowed}${peer_endpoint:+ | Endpoint: $peer_endpoint}"
 
-    {
-      printf '\n[Peer]\n'
-      printf '%-20s= %s\n' "PublicKey"           "$peer_pubkey"
-      printf '%-20s= %s\n' "AllowedIPs"          "$peer_allowed"
-      [ -n "$peer_psk"       ] && printf '%-20s= %s\n' "PresharedKey"        "$peer_psk"
-      [ -n "$peer_endpoint"  ] && printf '%-20s= %s\n' "Endpoint"            "$peer_endpoint"
-      [ -n "$peer_keepalive" ] && printf '%-20s= %s\n' "PersistentKeepalive" "$peer_keepalive"
-    } >> "$CFG"
+    cfg_add ''
+    cfg_add '[Peer]'
+    cfg_peer PublicKey  "$peer_pubkey"
+    cfg_peer AllowedIPs "$peer_allowed"
+    [ -n "$peer_psk"       ] && cfg_peer PresharedKey        "$peer_psk"
+    [ -n "$peer_endpoint"  ] && cfg_peer Endpoint            "$peer_endpoint"
+    [ -n "$peer_keepalive" ] && cfg_peer PersistentKeepalive "$peer_keepalive"
     unset peer_psk peer_psk_file
     unset "WG_PEER_${id}_PSK" "WG_PEER_${id}_PSK_FILE" 2>/dev/null || true
 
@@ -829,15 +820,13 @@ if [ "$WG_ROLE" = "server" ]; then
   log "Configured ${peer_count} peer(s)."
 
 else
-  # Client: single server peer
-  {
-    printf '\n[Peer]\n'
-    printf '%-20s= %s\n' "PublicKey"           "$WG_SERVER_PUBKEY"
-    printf '%-20s= %s\n' "AllowedIPs"          "$WG_ALLOWED_IPS"
-    printf '%-20s= %s\n' "Endpoint"            "$WG_SERVER_ENDPOINT"
-    printf '%-20s= %s\n' "PersistentKeepalive" "$WG_KEEPALIVE"
-    [ -n "${WG_PSK:-}" ] && printf '%-20s= %s\n' "PresharedKey" "$WG_PSK"
-  } >> "$CFG"
+  cfg_add ''
+  cfg_add '[Peer]'
+  cfg_peer PublicKey           "$WG_SERVER_PUBKEY"
+  cfg_peer AllowedIPs          "$WG_ALLOWED_IPS"
+  cfg_peer Endpoint            "$WG_SERVER_ENDPOINT"
+  cfg_peer PersistentKeepalive "$WG_KEEPALIVE"
+  [ -n "${WG_PSK:-}" ] && cfg_peer PresharedKey "$WG_PSK"
   unset WG_PSK WG_PSK_FILE
 fi
 
@@ -850,6 +839,22 @@ case "$WG_TABLE" in
     fi
     ;;
 esac
+
+# --- Write WireGuard config ---
+# The only thing that sets the config's mode; it is always freshly created below.
+umask 077
+mkdir -p /etc/wireguard
+# Unlinked first, then created with `set -C`: a plain truncate follows a symlink.
+rm -f "$CFG" 2>/dev/null || die "Could not replace ${CFG}."
+( set -C; printf '%s' "$_cfg" > "$CFG" ) 2>/dev/null ||
+  die "Could not create ${CFG}. A bind-mounted /etc/wireguard has to be writable by the container, and on an SELinux host it also needs a label the container may write (add :z to the mount)."
+unset _cfg
+
+# INT and TERM too, because as PID 1 the shell drops an untrapped signal; cleared
+# first, or EXIT removes a claim somebody else has taken meanwhile.
+trap 'trap - INT TERM EXIT; release_claim; rm -f "$CFG"; exit 130' INT
+trap 'trap - INT TERM EXIT; release_claim; rm -f "$CFG"; exit 143' TERM
+trap 'release_claim; rm -f "$CFG"' EXIT
 
 # --- Start WireGuard ---
 IFACE_UP=0

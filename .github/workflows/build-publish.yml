@@ -3,7 +3,7 @@ name: Build & Publish
 on:
   push:
     branches: [main]
-    # Semver only: a tag the rules below cannot name pushes untagged digests.
+    # Only tags the metadata rules below can name.
     tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
   pull_request:
     branches: [main]
@@ -13,12 +13,10 @@ env:
   GITHUB_IMAGE: ghcr.io/ivenos/compwire
   DOCKERHUB_IMAGE: ivenos/compwire
 
-# One run per ref: PRs cancel superseded runs, pushes to the same ref queue.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Least privilege by default; jobs that publish opt into more below.
 permissions:
   contents: read
 
@@ -27,7 +25,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # No job pushes with git, so GITHUB_TOKEN has no business in .git/config.
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -39,7 +36,6 @@ jobs:
         run: sh test/run_tests.sh
 
       - name: Check the compose files parse
-        # Nothing else reads the examples.
         run: |
           for f in examples/*.yaml; do
             echo "$f"
@@ -47,9 +43,7 @@ jobs:
           done
 
       - name: Run tests under busybox ash
-        # The runner's sh is bash, the image's is busybox, and parts of the
-        # entrypoint exist because they disagree. Renovate bumps the base image in
-        # the Dockerfile and never reads a run: block, so it is taken from there.
+        # The Dockerfile is the only place Renovate bumps the base image.
         run: |
           base=$(awk '/^FROM /{print $2; exit}' Dockerfile)
           echo "Base image: $base"
@@ -77,8 +71,6 @@ jobs:
 
   build:
     needs: [test, integration]
-    # A fork or a dispatch off a side branch would push untagged blobs and then
-    # fail at manifest creation.
     if: >-
       github.repository == 'ivenos/compwire' &&
       github.event_name != 'pull_request' &&
@@ -106,8 +98,7 @@ jobs:
 
       - name: Docker meta
         id: meta
-        # This job tags nothing, but the labels baked into the image derive from
-        # the same rules; without them image.version is the bare ref.
+        # Only the labels are used here; image.version comes from the same rules.
         uses: docker/metadata-action@v6
         with:
           images: |
@@ -124,8 +115,6 @@ jobs:
             org.opencontainers.image.licenses=GPL-3.0-only
 
       - name: Refuse to push digests that no tag will reference
-        # The trigger glob is wider than the semver rules, and the push job only
-        # notices once the blobs are in both registries.
         env:
           REF: ${{ github.ref }}
         run: |
@@ -163,8 +152,6 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
 
       - name: Integration test the image that was pushed
-        # The job above tests the source tree, this tests the artifact: neither
-        # build pins the apk index. By digest and before any tag.
         env:
           REF: ${{ env.GITHUB_IMAGE }}@${{ steps.build.outputs.digest }}
         run: |
@@ -207,8 +194,7 @@ jobs:
 
       - name: Check that every architecture arrived
         working-directory: /tmp/digests
-        # imagetools create exits 0 for a single digest and republishes every tag,
-        # latest included, as a single-arch image.
+        # imagetools create accepts a single digest and then publishes every tag single-arch.
         env:
           EXPECTED: 2
         run: |
@@ -241,7 +227,6 @@ jobs:
           images: |
             ${{ env.GITHUB_IMAGE }}
             docker.io/${{ env.DOCKERHUB_IMAGE }}
-          # latest=auto keeps `latest` off prereleases like v2.0.0-rc1.
           flavor: latest=auto
           tags: |
             type=raw,value=dev,enable=${{ github.ref == 'refs/heads/main' }}
@@ -250,7 +235,6 @@ jobs:
             type=semver,pattern={{major}}
 
       - name: Fail loudly if no tag was derived
-        # Via env, not interpolated: a ref name may contain shell metacharacters.
         env:
           REF: ${{ github.ref }}
         run: |
@@ -274,9 +258,7 @@ jobs:
             $(jq -cr '.tags | map(select(startswith("ghcr.io") | not)) | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf 'docker.io/${{ env.DOCKERHUB_IMAGE }}@sha256:%s ' *)
 
-  # Its own job, after both registries are tagged: in the push job a failure here
-  # left GHCR tagged and Docker Hub not, and `docker login` leaves credentials
-  # behind for the rest of that job. Only on a release, which the hyphen rules out.
+  # After both registries are tagged, away from the job holding the registry logins.
   dockerhub-readme:
     runs-on: ubuntu-latest
     timeout-minutes: 10
