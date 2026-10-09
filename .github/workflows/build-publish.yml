@@ -3,11 +3,15 @@ name: Build & Publish
 on:
   push:
     branches: [main]
-    # Only tags the metadata rules below can name.
-    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
   pull_request:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      tag:
+        description: The release tag to build and publish, such as v1.5.0
+        required: true
+        type: string
 
 env:
   GITHUB_IMAGE: ghcr.io/ivenos/compwire
@@ -28,6 +32,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          ref: ${{ inputs.tag }}
 
       - name: Shellcheck
         run: shellcheck entrypoint.sh test/run_tests.sh test/integration_test.sh
@@ -62,6 +67,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          ref: ${{ inputs.tag }}
 
       - name: Build image
         run: docker build -t compwire:test .
@@ -95,6 +101,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          ref: ${{ inputs.tag }}
+
+      - name: Read the commit that was checked out
+        id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Docker meta
         id: meta
@@ -106,13 +117,14 @@ jobs:
             docker.io/${{ env.DOCKERHUB_IMAGE }}
           flavor: latest=auto
           tags: |
-            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/main' }}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/main' && inputs.tag == '' }}
+            type=semver,pattern={{version}},value=${{ inputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.tag }}
+            type=semver,pattern={{major}},value=${{ inputs.tag }}
           # GitHub reports the deprecated GPL-3.0, which leaves -only open.
           labels: |
             org.opencontainers.image.licenses=GPL-3.0-only
+            org.opencontainers.image.revision=${{ steps.commit.outputs.sha }}
 
       - name: Refuse to push digests that no tag will reference
         env:
@@ -229,10 +241,10 @@ jobs:
             docker.io/${{ env.DOCKERHUB_IMAGE }}
           flavor: latest=auto
           tags: |
-            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/main' }}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/main' && inputs.tag == '' }}
+            type=semver,pattern={{version}},value=${{ inputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.tag }}
+            type=semver,pattern={{major}},value=${{ inputs.tag }}
 
       - name: Fail loudly if no tag was derived
         env:
@@ -263,7 +275,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: push
-    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+    if: inputs.tag != '' && !contains(inputs.tag, '-')
     permissions:
       contents: read
 
@@ -271,8 +283,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          ref: ${{ inputs.tag }}
 
       - name: Prepare Docker Hub README
+        env:
+          TAG: ${{ inputs.tag }}
         run: |
           printf '**Note:** This description is automatically generated from the [GitHub repository README](https://github.com/ivenos/compwire).\n\n---\n\n' \
             | cat - README.md > /tmp/dockerhub-readme.md
@@ -281,7 +296,7 @@ jobs:
           sed -i -E \
             -e 's#\]\(http#](@@KEEP@@http#g' \
             -e 's#\]\(\##](@@KEEP@@\##g' \
-            -e "s#\]\(([^)@][^)]*)\)#](https://github.com/ivenos/compwire/blob/${GITHUB_REF_NAME}/\1)#g" \
+            -e "s#\]\(([^)@][^)]*)\)#](https://github.com/ivenos/compwire/blob/${TAG}/\1)#g" \
             -e 's#@@KEEP@@##g' \
             /tmp/dockerhub-readme.md
 

@@ -1,18 +1,30 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
+  "ignorePaths": [],
   "dependencyDashboard": false,
   "labels": ["dependencies"],
   "minimumReleaseAge": "3 days",
   "minimumReleaseAgeBehaviour": "timestamp-optional",
   "platformAutomerge": false,
   "automergeStrategy": "squash",
+  "postUpgradeTasks": {
+    "commands": ["sh .github/scripts/changelog.sh dependency"],
+    "dataFileTemplate": "{{{depName}}}\t{{#if currentVersion}}{{{currentVersion}}}{{else}}{{{currentValue}}}{{/if}}\t{{#if newVersion}}{{{newVersion}}}{{else}}{{{newValue}}}{{/if}}\n",
+    "fileFilters": ["CHANGELOG.md"]
+  },
   "packageRules": [
     {
       "matchManagers": ["github-actions"],
       "groupName": "GitHub Actions",
       "commitMessagePrefix": "ci:",
       "automerge": true
+    },
+    {
+      "description": "Runs on releases only, so no pull request check covers it.",
+      "matchPackageNames": ["softprops/action-gh-release"],
+      "groupName": "release action",
+      "automerge": false
     },
     {
       "matchManagers": ["dockerfile", "docker-compose"],

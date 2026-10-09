@@ -251,7 +251,7 @@ POST_UP='iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACC
 
 scenario_run "$SRV" \
   --network "wg-mc-$RUN" \
-  --cap-add NET_ADMIN \
+  --cap-drop ALL --cap-add NET_ADMIN \
   --sysctl net.ipv4.ip_forward=1 \
   -e WG_ROLE=server \
   -e "WG_PRIVATE_KEY=$SRV_PRIV" \
@@ -632,7 +632,7 @@ echo "################################################################"
 echo "# Scenario: hardened  (cap_drop ALL)"
 echo "################################################################"
 
-# Every compose file runs the image this way and no scenario above does.
+# Every compose file runs the image this way; above only the multi-client server does.
 RUN="$$h"
 SRV="wg-hard-srv-$RUN"; CL="wg-hard-cl-$RUN"
 scenario_start "wg-hard-$RUN"

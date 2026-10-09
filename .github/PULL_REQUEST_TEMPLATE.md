@@ -6,13 +6,13 @@
 
 ## Test plan
 
-<!-- Which role (server or client), which scenario, and whether you covered it with
-     unit tests, integration tests or a manual run. -->
+<!-- Which role (server or client), which scenario, and whether you covered it with unit tests, integration tests or a manual run. -->
 
 ## Checklist
 
 - [ ] One concern per pull request
 - [ ] Tests added for the behavior that changed
+- [ ] An entry under `Unreleased` in `CHANGELOG.md` for what users will notice
 - [ ] `shellcheck` and both test suites pass
 
 ---

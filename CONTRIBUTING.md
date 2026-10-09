@@ -49,21 +49,42 @@ sh test/integration_test.sh compwire:test
 
 ## Commits
 
-Conventional Commits (https://www.conventionalcommits.org/en/v1.0.0/) with a short imperative subject.
+- Conventional Commits (https://www.conventionalcommits.org/en/v1.0.0/) with a short imperative subject.
+- A commit that does more than one thing lists its changes in the body, under the changelog section names as plain words. Changes to CI and tests are listed there too:
+
+```
+Added
+- genpsk prints a pre-shared key
+
+Changed
+- CI runs the unit suite under busybox ash
+
+Fixed
+- A trailing comma in an address list went unnoticed
+```
+
+## Changelog
+
+- `CHANGELOG.md` follows Keep a Changelog (https://keepachangelog.com/en/1.1.0/), with `Breaking changes` as the first section and `Dependencies` as the last.
+- Every commit that changes something for users adds its entry under `Unreleased`. CI, tests and refactoring stay out.
+- An entry is one short sentence in plain words that anyone understands. Details belong in the README.
+- What users have to act on after an update goes under `Breaking changes`.
+- An entry that goes back to an issue or a pull request ends with its number: `(#12)`.
 
 ## Releases
 
-- A `v[0-9]+.[0-9]+.[0-9]+*` tag builds the multi-arch image and publishes it to GHCR and Docker Hub. A release moves `latest`, a prerelease such as `v2.0.0-rc1` does not. Commits on `main` publish `dev`.
-- The changelog lives in the GitHub release notes, in Keep a Changelog style (https://keepachangelog.com/en/1.1.0/). There is no CHANGELOG.md.
+- Run the Release workflow with the new version, such as `1.5.0`. It turns `Unreleased` into that version, tags the commit, publishes the image and builds a draft release with the notes from `CHANGELOG.md`.
+- A tag pushed by hand publishes the image and builds the draft too, from the section of its version.
+- The image goes to GHCR and Docker Hub, for amd64 and arm64. A release moves `latest`, a prerelease such as `v2.0.0-rc1` does not. Commits on `main` publish `dev`.
 
 ## Dependencies
 
 - The Alpine base and the GitHub Actions stay on version tags, never commit SHAs or digests.
-- Renovate opens the bumps. Other PRs leave dependencies alone.
+- Renovate opens the bumps and adds each one to the changelog. The release adds the numbers of their pull requests. Other PRs leave dependencies alone.
 
 ## Pull requests
 
-- One concern per PR, with tests for behavior changes.
+- One concern per PR, with tests and a changelog entry for behavior changes.
 - Only the PR author and the maintainer commit to it.
 - `shellcheck` and both test suites must pass.
-- Fill in the PR template, including the CLA checkbox.
+- Fill in the PR template, including the test plan and the CLA checkbox.

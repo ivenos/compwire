@@ -75,7 +75,7 @@ Start both with `docker compose up -d`. The [examples](https://github.com/ivenos
 | `WG_PRIVATE_KEY_FILE` | - | File containing the private key |
 | `WG_ADDRESS` | Server `10.77.0.1/24`, client `10.77.0.2/32` | Tunnel address, comma-separated for IPv4 and IPv6 |
 | `WG_PORT` | Server `51820`, client random | UDP listen port. Servers sharing the host network each need their own |
-| `WG_IFACE` | `wg0` | Interface name, at most 15 characters. Containers sharing the host network each need their own |
+| `WG_IFACE` | `wg0` | Interface name, up to 15 letters, digits, `-` and `_`. Containers sharing the host network each need their own |
 | `WG_DNS` | - | DNS servers and search domains for the container's own resolver, comma-separated, at least one server |
 | `WG_MTU` | - | Interface MTU, 1280-9000 |
 | `WG_TABLE` | - | Routing table: `auto`, `off` or a table ID |
