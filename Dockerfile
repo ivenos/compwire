@@ -1,8 +1,8 @@
-FROM alpine:3.24
+FROM alpine:3.24.3
 
 # nftables: wg-quick reaches for it first, and its iptables fallback needs
 # xt_comment and xt_mark on the host.
-RUN apk add --no-cache \
+RUN apk upgrade --no-cache && apk add --no-cache \
     wireguard-tools \
     iptables \
     ip6tables \

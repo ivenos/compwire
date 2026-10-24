@@ -75,11 +75,12 @@ Fixed
 
 - Run the Release workflow with the new version, such as `1.5.0`. It turns `Unreleased` into that version, tags the commit, publishes the image and builds a draft release with the notes from `CHANGELOG.md`.
 - A tag pushed by hand publishes the image and builds the draft too, from the section of its version.
+- A merged Alpine patch is released on its own as the next patch version, without a draft. If `Unreleased` lists more than dependencies, it waits for the next release.
 - The image goes to GHCR and Docker Hub, for amd64 and arm64. A release moves `latest`, a prerelease such as `v2.0.0-rc1` does not. Commits on `main` publish `dev`.
 
 ## Dependencies
 
-- The Alpine base and the GitHub Actions stay on version tags, never commit SHAs or digests.
+- The Alpine base and the GitHub Actions stay on version tags, never commit SHAs or digests. Alpine carries its full version, such as `3.24.3`, so Renovate sees every patch and merges it on its own.
 - Renovate opens the bumps and adds each one to the changelog. The release adds the numbers of their pull requests. Other PRs leave dependencies alone.
 
 ## Pull requests

@@ -6,7 +6,7 @@
 <a href="https://hub.docker.com/r/ivenos/compwire"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/docker/pulls/ivenos/compwire.svg?variant=secondary&amp;mode=dark"><img alt="Docker Pulls" src="https://shieldcn.dev/docker/pulls/ivenos/compwire.svg?variant=secondary&amp;mode=light"></picture></a>
 <a href="https://github.com/ivenos/compwire/blob/main/LICENSE"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/license-GPL_3.0.svg?variant=secondary&amp;mode=dark"><img alt="License" src="https://shieldcn.dev/badge/license-GPL_3.0.svg?variant=secondary&amp;mode=light"></picture></a>
 
-compwire is a minimal Docker image running WireGuard as a server or client, configured entirely via environment variables.
+compwire is a minimal Docker image that runs WireGuard as a server or client, configured entirely via environment variables.
 
 </div>
 

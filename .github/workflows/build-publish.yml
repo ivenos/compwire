@@ -162,6 +162,7 @@ jobs:
           outputs: type=image,"name=${{ env.GITHUB_IMAGE }},docker.io/${{ env.DOCKERHUB_IMAGE }}",push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+          no-cache: ${{ inputs.tag != '' }}
 
       - name: Integration test the image that was pushed
         env:

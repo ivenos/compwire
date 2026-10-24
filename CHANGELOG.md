@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file, in the format o
 
 ## [Unreleased]
 
+### Changed
+
+- Every Alpine patch is followed by a compwire patch release with the latest package fixes.
+
+### Dependencies
+
+- alpine 3.24 -> 3.24.3
+
 ## [1.0.1] - 2026-09-17
 
 ### Changed

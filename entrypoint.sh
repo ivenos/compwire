@@ -667,7 +667,7 @@ cfg_iface PrivateKey "$WG_PRIVATE_KEY"
 unset WG_PRIVATE_KEY
 
 if [ "$WG_ROLE" = "server" ]; then
-  # An unrecognised WG_PEER_* name is a typo, and silence would drop the peer.
+  # An unrecognized WG_PEER_* name is a typo, and silence would drop the peer.
   PEER_ATTRS="PUBKEY ALLOWED_IPS PSK PSK_FILE ENDPOINT KEEPALIVE"
   peer_ids=""
   # ENVIRON rather than parsing `env`: a newline in any value would invent a peer.
