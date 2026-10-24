@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file, in the format o
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-10-24
+
 ### Changed
 
 - Every Alpine patch is followed by a compwire patch release with the latest package fixes.
@@ -125,7 +127,8 @@ All notable changes to this project are documented in this file, in the format o
 - A healthcheck, and a log line when a peer connects or drops.
 - Examples for a basic setup, several clients, a full tunnel and an IPv6 endpoint.
 
-[Unreleased]: https://github.com/ivenos/compwire/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/ivenos/compwire/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/ivenos/compwire/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/ivenos/compwire/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/ivenos/compwire/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/ivenos/compwire/compare/v0.1.3...v0.2.0
