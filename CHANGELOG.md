@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file, in the format o
 
 ## [Unreleased]
 
+### Dependencies
+
+- alpine 3.24.3 -> 3.24.4
+
 ## [1.0.2] - 2026-10-24
 
 ### Changed

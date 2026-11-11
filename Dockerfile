@@ -1,4 +1,4 @@
-FROM alpine:3.24.3
+FROM alpine:3.24.4
 
 # nftables: wg-quick reaches for it first, and its iptables fallback needs
 # xt_comment and xt_mark on the host.
